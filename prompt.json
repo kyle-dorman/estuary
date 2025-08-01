@@ -1,0 +1,51 @@
+{
+    "version": "2025-07-31_rcf",
+    "system_msg": "You are a coastal scientist adept at labeling satellite images.",
+    "user_instruction": "Classify this intermittently open estuary as `open`, `closed`, or `unsure`. ",
+    "composite_hint": "You are looking at false-color NIR satellite images of an estuary/ocean boundary. In these composites, vegetation is bright red, standing water is dark/black, sand is light/tan, and surf foam is bright white.",
+    "classes": {
+        "unsure": {
+            "definition": "Berm/bridge throat cannot be evaluated.",
+            "image_cues": [
+                "Clouds, fog, heavy shadow, sensor streaks",
+                "Mouth area off-frame or missing pixels",
+                "Use **`unsure` ONLY** when **> 50 % of the berm/bridge throat is hidden by cloud, fog, deep shadow, sensor streaks, or the file is corrupted.**",
+                "**Blurry or low-resolution imagery is NOT enough**—if you can see most of the berm, pick the most likely of `open` or `closed` and justify briefly."
+            ]
+        },
+        "closed": {
+            "definition": "Berm (or culvert/road embankment at a bridge) blocks surface flow. Lagoon water (dark) and ocean are separated by ≥ 1 px of dry/damp light sand, and there is no aligned wet-sand corridor connecting the notch to the swash.",
+            "image_cues": [
+                "Continuous light/tan sand ridge across the mouth with no gap",
+                "Dark lagoon water stops landward of the crest",
+                "Seaward side shows only normal beach wetness/foam not aligned with any notch",
+                "At bridges: no dark or wet-sand corridor reappears on the ocean side"
+            ]
+        },
+        "open": {
+            "definition": "Berm is broken and there is a surface connection from lagoon to ocean, even if the channel is diffuse. Connection can be a visible dark ribbon or an aligned wet-sand corridor that reaches the swash zone. If a bridge is present, the corridor must reappear seaward and reach the swash.",
+            "image_cues": [
+                "Unbroken dark channel lagoon → surf, or dark ribbon merging into bright-white breakers",
+                "Aligned wet-sand corridor from the notch to the swash (often darker/glossier and extending farther up-beach than surrounding wet sand)",
+                "At bridges: dark/wet corridor reappears seaward of the bridge and continues to the swash"
+            ]
+        }
+    },
+    "bridge_rule": {
+        "open_condition": "Aligned dark or wet-sand corridor reappears seaward of the bridge and reaches the swash → open.",
+        "closed_condition": "Water disappears under the bridge and no aligned corridor is visible seaward → closed.",
+        "unsure_condition": "Bridge shadow/clouds hide both inlet and outlet so continuity cannot be judged → unsure."
+    },
+    "decision_flow": [
+        "1. Berm/bridge zone obscured? → unsure",
+        "2. Is there a continuous sand/structure ridge with ≥1 px light sand separating lagoon and ocean AND no aligned wet-sand corridor? → closed",
+        "3. Otherwise (berm broken with a dark ribbon OR an aligned wet-sand corridor from notch to swash; at bridges it reappears seaward) → open"
+    ],
+    "final_instructions": [
+        "Review the example images provided and then label the last image.",
+        "Think step by step.",
+        "If you label `unsure` incorrectly you will lose 2x more reward than mis-classifying `open` vs `closed`.",
+        "Return JSON with keys: label (unsure/closed/open) and reasoning (25-50 words explaining why your visual evidence matches the chosen class).",
+        "Only output `unsure` if the visibility rule above is met."
+    ]
+}

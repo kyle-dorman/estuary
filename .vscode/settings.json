@@ -18,7 +18,6 @@
       "reportPrivateImportUsage": "none",
       "reportUnboundVariable": "warning"
     },
-    "flake8.enabled": false,
     "editor.semanticTokenColorCustomizations": {
       "[One Dark Pro]": { // Apply to this theme only
           "enabled": true,
@@ -30,11 +29,6 @@
               "*.typeHintComment:python": "#aaaaaa"
           }
       }
-    },
-    "notebook.formatOnSave.enabled": true,
-    "notebook.codeActionsOnSave": {
-      "notebook.source.fixAll": "explicit",
-      "notebook.source.organizeImports": "explicit"
     },
   }
   

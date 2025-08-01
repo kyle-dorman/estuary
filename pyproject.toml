@@ -10,17 +10,24 @@ readme = "README.md"
 requires-python = ">= 3.12"
 dependencies = [
     "cartopy",
+    "claymodel",
     "click",
     "dask",
     "folium",
     "gdal[numpy]",
     "geopandas",
+    "ipywidgets>=8.1.7",
+    "label-studio>=1.20.0",
+    "label-studio-sdk>=1.0.18",
     "matplotlib",
     "numpy",
+    "openai>=1.97.0",
     "opencv-python-headless",
     "pandas",
     "pillow",
     "rasterio",
+    "requests>=2.32.4",
+    "scikit-image>=0.25.2",
     "scikit-learn",
     "scipy",
     "seaborn",
@@ -38,7 +45,48 @@ dev = [
 
 [tool.ruff]
 extend-include = ["*.ipynb"]
+# Set the maximum line length to 79.
+line-length = 100
 
 [tool.ruff.lint]
 # On top of the default `select` (`E4`, E7`, `E9`, and `F`), enable flake8-bugbear (`B`) and flake8-quotes (`Q`).
-extend-select = ["B", "Q", "I"]
+# Add the `line-too-long` rule to the enforced rule set. By default, Ruff omits rules that
+# overlap with the use of a formatter, like Black, but we can override this behavior by
+# explicitly adding the rule.
+# Pyupgrade
+extend-select = ["B", "Q", "I", "E501", "UP"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pyright]
+include = ["."]
+
+typeCheckingMode = "basic"
+useLibraryCodeForTypes = true
+pythonPlatform = "Linux"
+pythonVersion = "3.11"
+verboseOutput = true
+
+reportMissingImports = true
+reportMissingTypeStubs = false
+reportGeneralTypeIssues = "warning"
+reportPrivateImportUsage = "none"
+reportUnboundVariable = "warning"
+
+[tool.autopep8]
+max_line_length = 100
+ignore = ["W503", "W690"]
+in-place = true
+recursive = true
+experimental = true
+aggressive = 3
+verbose = false
+
+[tool.uv.sources]
+claymodel = { git = "https://github.com/Clay-foundation/model.git" }
