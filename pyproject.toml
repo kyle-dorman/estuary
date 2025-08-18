@@ -16,6 +16,7 @@ dependencies = [
     "folium",
     "gdal[numpy]",
     "geopandas",
+    "huggingface-hub>=0.34.1",
     "imageio[ffmpeg]>=2.37.0",
     "ipywidgets>=8.1.7",
     "label-studio>=1.20.0",
@@ -40,6 +41,7 @@ dependencies = [
     "torchmetrics>=1.8.0",
     "torchvision>=0.22.1",
     "tqdm",
+    "transformers>=4.55.2",
     "xarray",
 ]
 [dependency-groups]
