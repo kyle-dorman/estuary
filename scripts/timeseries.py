@@ -13,8 +13,8 @@ from estuary.clay.module import EstuaryModule
 BASE = Path("/Users/kyledorman/data/estuary/dove/results")
 LABELS_PATH = Path("/Users/kyledorman/data/estuary/label_studio/00025/labels.csv")
 CROP_PATH = Path("/Users/kyledorman/data/estuary/label_studio/region_crops.json")
-VALID_PATH = Path("/Users/kyledorman/data/estuary/valid.csv")
-SAVE_PATH = Path("/Users/kyledorman/data/estuary/preds.csv")
+VALID_PATH = Path("/Users/kyledorman/data/estuary/validv3.csv")
+SAVE_PATH = Path("/Users/kyledorman/data/estuary/predsv3.csv")
 MODEL_PATH = Path(
     "/Users/kyledorman/data/results/estuary/train/20250805-205230/checkpoints/last.ckpt"
 )

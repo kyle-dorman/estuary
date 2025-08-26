@@ -31,7 +31,6 @@ import torch
 import yaml
 from lightning.pytorch import LightningDataModule
 from pyproj import Transformer
-from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import v2
 
@@ -61,6 +60,135 @@ def cpu_count() -> int:
     if cnt is None:
         return 0
     return cnt
+
+
+def load_labels(conf: EstuaryConfig) -> pd.DataFrame:
+    df = pd.read_csv(conf.data)
+
+    cls_diff = set(df.label.unique()) - set(conf.classes)
+    if cls_diff:
+        logger.warning(f"Some label classes will be ignored {cls_diff}")
+    df = df[df.label.isin(conf.classes)].copy()
+
+    # build a lookup dict → index
+    lookup = {tok: idx for idx, tok in enumerate(conf.classes)}
+    # map to indices (will never produce NaN, because we pre-checked)
+    df["label_idx"] = df["label"].map(lookup)
+
+    # Ensure acquired datetime and year columns exist
+    if "acquired" not in df.columns:
+        if "source_tif" in df.columns:
+            df["acquired"] = df["source_tif"].apply(lambda p: parse_dt_from_pth(Path(p)))
+        else:
+            raise ValueError(
+                "load_labels: 'acquired' column missing and cannot derive from 'source_tif'."
+            )
+    df["acquired"] = pd.to_datetime(df["acquired"], errors="coerce")
+    if df["acquired"].isna().any():
+        bad = df.loc[df["acquired"].isna(), :].shape[0]
+        logger.warning(f"Dropping {bad} rows with invalid 'acquired' timestamps")
+        df = df.dropna(subset=["acquired"]).copy()
+    df["year"] = df["acquired"].dt.year.astype(int)
+
+    return df
+
+
+def create_splits(conf: EstuaryConfig) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Create train/val/test splits.
+
+    Supported strategies:
+      - "year": hold out one year for test and one for validation (manual),
+                 optional union with a full region holdout for test.
+      - "random": legacy stratified random split (fallback).
+    """
+    df = load_labels(conf)
+
+    # Log counts per year for transparency
+    year_counts = df.groupby("year").size().sort_index()
+    logger.info("Samples per year:\n" + year_counts.to_string())
+
+    import pdb
+
+    pdb.set_trace()
+
+    def _check(name: str, d: pd.DataFrame) -> None:
+        if len(d) < conf.min_rows_per_split:
+            raise ValueError(f"{name} split too small: {len(d)} < {conf.min_rows_per_split}")
+        if conf.require_all_classes:
+            present = set(d["label_idx"].unique().tolist())
+            needed = set(range(len(conf.classes)))
+            if not needed.issubset(present):
+                missing = sorted(needed - present)
+                raise ValueError(
+                    f"{name} split missing class indices {missing}; please adjust years/region."
+                )
+
+    if conf.test_year is None and conf.val_year is None:
+        years = df.year.unique()
+        years.sort()
+        test_year = years[-1]
+        val_year = years[-2]
+    elif conf.test_year is None and conf.val_year is None:
+        test_year = conf.test_year
+        val_year = conf.val_year
+    else:
+        raise ValueError(
+            "Split requires both conf.test_year and conf.val_year to be set or neither."
+        )
+
+    if test_year == val_year:
+        raise ValueError("conf.test_year and conf.val_year must be different.")
+
+    mask_test_year = df["year"] == test_year
+    mask_val_year = df["year"] == val_year
+    mask_holdout = (
+        (df["region"] == conf.holdout_region)
+        if conf.holdout_region
+        else pd.Series(False, index=df.index)
+    )
+
+    # Test is union of test_year and entire holdout_region (if provided)
+    test_mask = mask_test_year | mask_holdout
+    val_mask = mask_val_year & ~test_mask  # keep splits disjoint
+    train_mask = ~(test_mask | val_mask)  # remainder
+
+    df_test = df.loc[test_mask].copy()
+    df_val = df.loc[val_mask].copy()
+    df_train = df.loc[train_mask].copy()
+
+    # Final guard: if holdout_region is set, ensure it's fully excluded from train/val
+    if conf.holdout_region:
+        assert conf.holdout_region not in df_train.region.unique()
+        assert conf.holdout_region not in df_val.region.unique()
+
+    # Checks
+    _check("train", df_train)
+    _check("val", df_val)
+    _check("test", df_test)
+
+    # Log split sizes
+    logger.info(
+        "Split sizes -> train: %d, val: %d, test: %d", len(df_train), len(df_val), len(df_test)
+    )
+    return df_train, df_val, df_test
+
+
+def calc_class_weights(conf: EstuaryConfig) -> tuple[float, ...]:
+    df, _, _ = create_splits(conf)
+
+    counts = df["label_idx"].value_counts().sort_index()
+    # counts is a Series([n0, n1, n2]), where ni = number of examples in class i
+
+    # total number of samples
+    N = counts.sum()
+
+    # number of classes
+    C = len(counts)
+
+    # weight for each class = N / (C * ni)
+    weights = N / (C * counts.values)  # type: ignore
+
+    return tuple(weights.tolist())
 
 
 def load_planetscope_sr4_metadata(metadata_yaml: Path) -> dict:
@@ -241,7 +369,7 @@ class EstuaryDataset(Dataset):
         assert len(crop_box) == 4
         data, (lat, lon) = load_tif_crop(tif_path, crop_box, self.conf.bands)
 
-        dt = parse_dt_from_pth(tif_path)
+        dt = row.acquired
         datacube = prep_datacube(
             image=data,
             lat=lat,
@@ -268,9 +396,6 @@ class EstuaryDataModule(LightningDataModule):
     ) -> None:
         super().__init__()
         self.conf = conf
-        assert abs(conf.train_pct + conf.val_pct + conf.test_pct - 1.0) < 1e-6, (
-            "splits must sum to 1"
-        )
 
         self.save_hyperparameters(conf)
 
@@ -289,48 +414,11 @@ class EstuaryDataModule(LightningDataModule):
         if not self.conf.metadata_path.exists():
             raise FileNotFoundError(self.conf.metadata_path)
 
-    def create_splits(self) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        # load csv & crops map once
-        df = pd.read_csv(self.conf.data)
-
-        cls_diff = set(df.label.unique()) - set(self.conf.classes)
-        if cls_diff:
-            logger.warning(f"Some label classes will be ignored {cls_diff}")
-        df = df[df.label.isin(self.conf.classes)].copy()
-
-        # build a lookup dict → index
-        lookup = {tok: idx for idx, tok in enumerate(self.conf.classes)}
-        # map to indices (will never produce NaN, because we pre-checked)
-        df["label_idx"] = df["label"].map(lookup)
-
-        if self.conf.holdout_region is not None:
-            df_test = df[df.region == self.conf.holdout_region]
-            df = df[df.region != self.conf.holdout_region].copy()
-
-        # ----- stratified splits -----
-        sss1 = StratifiedShuffleSplit(
-            n_splits=1, test_size=self.conf.val_pct + self.conf.test_pct, random_state=None
-        )
-        train_idx, rem_idx = next(sss1.split(df, df["label"]))
-        df_train = df.iloc[train_idx]
-        df_rem = df.iloc[rem_idx]
-
-        if self.conf.holdout_region is None:
-            test_size = self.conf.test_pct / (self.conf.val_pct + self.conf.test_pct)
-            sss2 = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=None)
-            val_idx, test_idx = next(sss2.split(df_rem, df_rem["label"]))
-            df_val = df_rem.iloc[val_idx]
-            df_test = df_rem.iloc[test_idx]
-        else:
-            df_val = df_rem
-
-        return df_train, df_val, df_test
-
     def setup(self, stage: str | None = None) -> None:
         with open(self.conf.region_crops_json) as f:
             crops_map: dict[str, list[int]] = json.load(f)
 
-        df_train, df_val, df_test = self.create_splits()
+        df_train, df_val, df_test = create_splits(self.conf)
 
         # build datasets
         self.train_ds = EstuaryDataset(

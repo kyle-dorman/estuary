@@ -80,10 +80,10 @@ def make_plot(
     fig, (ax, ax_lab) = plt.subplots(
         nrows=2,
         sharex=True,
-        figsize=(12, 6),
+        figsize=(10, 3),
         dpi=dpi,
         constrained_layout=True,
-        gridspec_kw={"height_ratios": [2, 1]},
+        # gridspec_kw={"height_ratios": [2, 1]},
     )
 
     # Scatter of predicted states at y={0,1}
@@ -98,30 +98,30 @@ def make_plot(
         zorder=3,
     )
 
-    # Confidence as a smoothed line on a twin y-axis (0..1)
-    if "conf" in g.columns:
-        g["conf"] = pd.to_numeric(g["conf"], errors="coerce").clip(0, 1)
-        conf_smooth = g["conf"].rolling(f"{conf_smooth_days}D", min_periods=1, center=True).mean()
-        ax2 = ax.twinx()
-        ax2.plot(
-            g.index,
-            conf_smooth.to_numpy(),
-            color="#4c78a8",
-            alpha=0.8,
-            linewidth=1.8,
-            zorder=1,
-        )
-        ax2.set_ylim(0.0, 1.0)
-        ax2.set_yticks([0.0, 0.5, 1.0])
-        ax2.set_ylabel("confidence", fontsize=8)
-        ax2.grid(False)
+    # # Confidence as a smoothed line on a twin y-axis (0..1)
+    # if "conf" in g.columns:
+    #     g["conf"] = pd.to_numeric(g["conf"], errors="coerce").clip(0, 1)
+    #     conf_smooth = g["conf"].rolling(f"{conf_smooth_days}D", min_periods=1, center=True).mean()
+    #     ax2 = ax.twinx()
+    #     ax2.plot(
+    #         g.index,
+    #         conf_smooth.to_numpy(),
+    #         color="#4c78a8",
+    #         alpha=0.8,
+    #         linewidth=1.8,
+    #         zorder=1,
+    #     )
+    #     ax2.set_ylim(0.0, 1.0)
+    #     ax2.set_yticks([0.0, 0.5, 1.0])
+    #     ax2.set_ylabel("confidence", fontsize=8)
+    #     ax2.grid(False)
 
     # Formatting for predictions axis
     ax.set_ylim(-0.25, 1.25)
     ax.set_yticks([0, 1])
     ax.set_yticklabels([class0, class1])
     ax.grid(True, axis="y", linestyle="--", alpha=0.35)
-    ax.set_title(f"{region} — Predictions ({class0}/{class1})", fontsize=12, weight="bold")
+    ax.set_title("Predictions", fontsize=10)
 
     # Labels subplot
     lab = labels_df[labels_df["region"] == region].copy()
@@ -156,8 +156,8 @@ def make_plot(
                 ymin=-0.2,
                 ymax=1.2,
                 colors="#4c78a8",
-                alpha=0.15,
-                linewidth=1.0,
+                alpha=0.4,
+                linewidth=1.5,
                 zorder=1,
             )
             ax_lab.scatter(
@@ -176,10 +176,10 @@ def make_plot(
     ax_lab.set_yticks([0, 1])
     ax_lab.set_yticklabels([class0, class1])
     ax_lab.grid(True, axis="y", linestyle="--", alpha=0.35)
-    ax_lab.set_title("Ground truth labels", fontsize=11, weight="bold")
+    ax_lab.set_title("Labels", fontsize=10)
 
     # Quarterly month ticks (Jan, Apr, Jul, Oct) on bottom axis for seasonal sense
-    q_locator = MonthLocator(bymonth=[1, 4, 7, 10])
+    q_locator = MonthLocator()
     ax_lab.xaxis.set_major_locator(q_locator)
     ax_lab.xaxis.set_major_formatter(ConciseDateFormatter(q_locator))
     ax_lab.xaxis.set_minor_locator(MonthLocator())

@@ -4,7 +4,6 @@ import time
 import traceback
 from pathlib import Path
 
-import pandas as pd
 import torch
 from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
@@ -12,35 +11,11 @@ from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
 
 from estuary.clay.config import EstuaryConfig
-from estuary.clay.data import EstuaryDataModule
+from estuary.clay.data import EstuaryDataModule, calc_class_weights
 from estuary.clay.module import EstuaryModule
 from estuary.util import setup_logger
 
 logger = logging.getLogger(__name__)
-
-
-def calc_class_weights(conf: EstuaryConfig) -> tuple[float, ...]:
-    df = pd.read_csv(conf.data)
-    cls_diff = set(df.label.unique()) - set(conf.classes)
-    if cls_diff:
-        logger.warning(f"Some label classes will be ignored {cls_diff}")
-    df = df[df.label.isin(conf.classes)].copy()
-    lookup = {tok: idx for idx, tok in enumerate(conf.classes)}
-    df["label_idx"] = df["label"].map(lookup)
-    # after you’ve created df["label_idx"]:
-    counts = df["label_idx"].value_counts().sort_index()
-    # counts is a Series([n0, n1, n2]), where ni = number of examples in class i
-
-    # total number of samples
-    N = counts.sum()
-
-    # number of classes
-    C = len(counts)
-
-    # weight for each class = N / (C * ni)
-    weights = N / (C * counts.values)  # type: ignore
-
-    return tuple(weights.tolist())
 
 
 def main() -> None:
