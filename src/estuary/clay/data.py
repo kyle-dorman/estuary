@@ -1,22 +1,3 @@
-"""Embed PlanetScope SR crops into CLAY encoder embeddings.
-
-Refactor highlights:
-- Click CLI with required inputs and sensible defaults
-- Minimal INFO logging
-- TQDM progress bar
-- Small, testable functions
-- Fail-fast error handling
-
-Usage example:
-
-python -m estuary.scripts.clay \
-  --ls-base /Users/kyledorman/data/estuary/label_studio/00025 \
-  --region-crops /Users/kyledorman/data/estuary/label_studio/region_crops.json \
-  --size 256 \
-  --overwrite
-
-"""
-
 import datetime
 import json
 import logging
@@ -36,9 +17,6 @@ from torchvision.transforms import v2
 
 from estuary.clay.config import EstuaryConfig
 
-# -----------------------------
-# Logging
-# -----------------------------
 logger = logging.getLogger(__name__)
 
 
@@ -93,7 +71,9 @@ def load_labels(conf: EstuaryConfig) -> pd.DataFrame:
     return df
 
 
-def create_splits(conf: EstuaryConfig) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def create_splits(
+    conf: EstuaryConfig, verbose: bool = True
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Create train/val/test splits.
 
     Supported strategies:
@@ -103,13 +83,10 @@ def create_splits(conf: EstuaryConfig) -> tuple[pd.DataFrame, pd.DataFrame, pd.D
     """
     df = load_labels(conf)
 
-    # Log counts per year for transparency
-    year_counts = df.groupby("year").size().sort_index()
-    logger.info("Samples per year:\n" + year_counts.to_string())
-
-    import pdb
-
-    pdb.set_trace()
+    if verbose:
+        # Log counts per year for transparency
+        year_label_counts = df.groupby(["year", "label"]).size().sort_index()
+        logger.info("Samples per year/label:\n" + year_label_counts.to_string())
 
     def _check(name: str, d: pd.DataFrame) -> None:
         if len(d) < conf.min_rows_per_split:
@@ -174,7 +151,7 @@ def create_splits(conf: EstuaryConfig) -> tuple[pd.DataFrame, pd.DataFrame, pd.D
 
 
 def calc_class_weights(conf: EstuaryConfig) -> tuple[float, ...]:
-    df, _, _ = create_splits(conf)
+    df, _, _ = create_splits(conf, verbose=False)
 
     counts = df["label_idx"].value_counts().sort_index()
     # counts is a Series([n0, n1, n2]), where ni = number of examples in class i
@@ -335,6 +312,11 @@ class EstuaryDataset(Dataset):
             tfs += [
                 v2.RandomHorizontalFlip(conf.horizontal_flip),
                 v2.RandomVerticalFlip(conf.vertical_flip),
+                v2.RandomResizedCrop(
+                    size=(conf.chip_size, conf.chip_size),
+                    scale=(conf.min_scale, 1.0),
+                    antialias=True,
+                ),
             ]
         tfs += [
             v2.Resize(size=(conf.chip_size, conf.chip_size), interpolation=3),
@@ -415,30 +397,31 @@ class EstuaryDataModule(LightningDataModule):
             raise FileNotFoundError(self.conf.metadata_path)
 
     def setup(self, stage: str | None = None) -> None:
-        with open(self.conf.region_crops_json) as f:
-            crops_map: dict[str, list[int]] = json.load(f)
+        if self.train_ds is None or self.val_ds is None or self.test_ds is None:
+            with open(self.conf.region_crops_json) as f:
+                crops_map: dict[str, list[int]] = json.load(f)
 
-        df_train, df_val, df_test = create_splits(self.conf)
+            df_train, df_val, df_test = create_splits(self.conf)
 
-        # build datasets
-        self.train_ds = EstuaryDataset(
-            df=df_train,
-            crops_map=crops_map,
-            conf=self.conf,
-            train=True,
-        )
-        self.val_ds = EstuaryDataset(
-            df=df_val,
-            crops_map=crops_map,
-            conf=self.conf,
-            train=False,
-        )
-        self.test_ds = EstuaryDataset(
-            df=df_test,
-            crops_map=crops_map,
-            conf=self.conf,
-            train=False,
-        )
+            # build datasets
+            self.train_ds = EstuaryDataset(
+                df=df_train,
+                crops_map=crops_map,
+                conf=self.conf,
+                train=True,
+            )
+            self.val_ds = EstuaryDataset(
+                df=df_val,
+                crops_map=crops_map,
+                conf=self.conf,
+                train=False,
+            )
+            self.test_ds = EstuaryDataset(
+                df=df_test,
+                crops_map=crops_map,
+                conf=self.conf,
+                train=False,
+            )
 
     # -------- DataLoaders --------
     def train_dataloader(self):

@@ -13,6 +13,7 @@ dependencies = [
     "claymodel",
     "click",
     "dask",
+    "earthengine-api>=1.6.4",
     "folium",
     "gdal[numpy]",
     "geopandas",

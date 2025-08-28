@@ -53,6 +53,7 @@ def make_plot(
     start_dt: pd.Timestamp | None = None,
     end_dt: pd.Timestamp | None = None,
     conf_smooth_days: int = 21,
+    skip_labels: bool = False,
 ) -> None:
     g = df[df["region"] == region].copy()
     if g.empty:
@@ -77,14 +78,21 @@ def make_plot(
     colors = [cmap[int(v)][0] for v in g["pred"].tolist()]
 
     # Build figure with two rows: predictions (top) and labels (bottom)
-    fig, (ax, ax_lab) = plt.subplots(
-        nrows=2,
+    nrows = 1 if skip_labels else 2
+    width = 10 if not skip_labels else 4
+    height = 3 if not skip_labels else 1.5
+    fig, axes = plt.subplots(
+        nrows=nrows,
         sharex=True,
-        figsize=(10, 3),
+        figsize=(width, height),
         dpi=dpi,
         constrained_layout=True,
         # gridspec_kw={"height_ratios": [2, 1]},
     )
+    if skip_labels:
+        ax = axes
+    else:
+        ax = axes[0]
 
     # Scatter of predicted states at y={0,1}
     ax.scatter(
@@ -123,70 +131,76 @@ def make_plot(
     ax.grid(True, axis="y", linestyle="--", alpha=0.35)
     ax.set_title("Predictions", fontsize=10)
 
-    # Labels subplot
-    lab = labels_df[labels_df["region"] == region].copy()
-    if not lab.empty:
-        lab["acquired"] = pd.to_datetime(lab["acquired"], errors="coerce")
-        lab = lab.dropna(subset=["acquired"]).sort_values("acquired").set_index("acquired")
-        if start_dt is not None or end_dt is not None:
-            lab = lab.loc[start_dt:end_dt]
+    if not skip_labels:
+        ax_lab = axes[1]
+        # Labels subplot
+        lab = labels_df[labels_df["region"] == region].copy()
         if not lab.empty:
-            colors_lab = [cmap[int(v)][0] for v in lab["label_idx"].tolist()]
-            ax_lab.scatter(
-                lab.index,
-                lab["label_idx"].to_numpy(),
-                c=colors_lab,
-                s=10,
-                alpha=0.9,
-                edgecolors="k",
-                linewidths=0.1,
-                zorder=2,
-            )
-    # Overlay markers for dates where we have high-resolution example images
-    hi = high_res_df[high_res_df["region"] == region].copy()
-    if not hi.empty:
-        hi["acquired"] = pd.to_datetime(hi["acquired"], errors="coerce")
-        hi = hi.dropna(subset=["acquired"]).sort_values("acquired").set_index("acquired")
-        if start_dt is not None or end_dt is not None:
-            hi = hi.loc[start_dt:end_dt]
+            lab["acquired"] = pd.to_datetime(lab["acquired"], errors="coerce")
+            lab = lab.dropna(subset=["acquired"]).sort_values("acquired").set_index("acquired")
+            if start_dt is not None or end_dt is not None:
+                lab = lab.loc[start_dt:end_dt]
+            if not lab.empty:
+                colors_lab = [cmap[int(v)][0] for v in lab["label_idx"].tolist()]
+                ax_lab.scatter(
+                    lab.index,
+                    lab["label_idx"].to_numpy(),
+                    c=colors_lab,
+                    s=10,
+                    alpha=0.9,
+                    edgecolors="k",
+                    linewidths=0.1,
+                    zorder=2,
+                )
+        # Overlay markers for dates where we have high-resolution example images
+        hi = high_res_df[high_res_df["region"] == region].copy()
         if not hi.empty:
-            # Light vertical lines and a small marker below the 0/1 band
-            ax_lab.vlines(
-                hi.index,
-                ymin=-0.2,
-                ymax=1.2,
-                colors="#4c78a8",
-                alpha=0.4,
-                linewidth=1.5,
-                zorder=1,
-            )
-            ax_lab.scatter(
-                hi.index,
-                [-0.15] * len(hi),
-                s=18,
-                color="#4c78a8",
-                alpha=0.9,
-                marker="v",
-                edgecolors="white",
-                linewidths=0.5,
-                zorder=3,
-            )
+            hi["acquired"] = pd.to_datetime(hi["acquired"], errors="coerce")
+            hi = hi.dropna(subset=["acquired"]).sort_values("acquired").set_index("acquired")
+            if start_dt is not None or end_dt is not None:
+                hi = hi.loc[start_dt:end_dt]
+            if not hi.empty:
+                # Light vertical lines and a small marker below the 0/1 band
+                ax_lab.vlines(
+                    hi.index,
+                    ymin=-0.2,
+                    ymax=1.2,
+                    colors="#4c78a8",
+                    alpha=0.4,
+                    linewidth=1.0,
+                    zorder=1,
+                )
+                ax_lab.scatter(
+                    hi.index,
+                    [-0.15] * len(hi),
+                    s=18,
+                    color="#4c78a8",
+                    alpha=0.9,
+                    marker="v",
+                    edgecolors="white",
+                    linewidths=0.5,
+                    zorder=3,
+                )
 
-    ax_lab.set_ylim(-0.25, 1.25)
-    ax_lab.set_yticks([0, 1])
-    ax_lab.set_yticklabels([class0, class1])
-    ax_lab.grid(True, axis="y", linestyle="--", alpha=0.35)
-    ax_lab.set_title("Labels", fontsize=10)
+        ax_lab.set_ylim(-0.25, 1.25)
+        ax_lab.set_yticks([0, 1])
+        ax_lab.set_yticklabels([class0, class1])
+        ax_lab.grid(True, axis="y", linestyle="--", alpha=0.35)
+        ax_lab.set_title("Labels", fontsize=10)
+
+    if skip_labels:
+        label_axis = ax
+    else:
+        label_axis = axes[1]
+        # Hide top x tick labels to reduce clutter
+        ax.tick_params(labelbottom=False)
 
     # Quarterly month ticks (Jan, Apr, Jul, Oct) on bottom axis for seasonal sense
     q_locator = MonthLocator()
-    ax_lab.xaxis.set_major_locator(q_locator)
-    ax_lab.xaxis.set_major_formatter(ConciseDateFormatter(q_locator))
-    ax_lab.xaxis.set_minor_locator(MonthLocator())
-    ax_lab.tick_params(axis="x", which="minor", length=3, color="#999999", width=0.6)
-
-    # Hide top x tick labels to reduce clutter
-    ax.tick_params(labelbottom=False)
+    label_axis.xaxis.set_major_locator(q_locator)
+    label_axis.xaxis.set_major_formatter(ConciseDateFormatter(q_locator))
+    label_axis.xaxis.set_minor_locator(MonthLocator())
+    label_axis.tick_params(axis="x", which="minor", length=3, color="#999999", width=0.6)
 
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
@@ -228,6 +242,8 @@ def main() -> None:
         default=20,
         help="Rolling window (days) for confidence smoothing",
     )
+    ap.add_argument("--region", type=str, default=None, help="If set, only plot this region")
+    ap.add_argument("--skip-labels", action="store_true", help="If set, skip plotting labels")
     args = ap.parse_args()
 
     out_dir: Path = args.out_dir
@@ -254,6 +270,12 @@ def main() -> None:
 
     # Iterate regions and save one PNG each
     regions = df["region"].dropna().unique().tolist()
+    if args.region:
+        if args.region in regions:
+            regions = [args.region]
+        else:
+            print(f"Region {args.region} not found in predictions file")
+            return
     for region in tqdm.tqdm(regions):
         fname = out_dir / f"{region}_state_timeseries.png"
         make_plot(
@@ -268,6 +290,7 @@ def main() -> None:
             start_dt,
             end_dt,
             args.conf_smooth_days,
+            args.skip_labels,
         )
 
 

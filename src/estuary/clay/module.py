@@ -9,7 +9,11 @@ from torch import nn, optim
 from torch.optim.lr_scheduler import CosineAnnealingLR, SequentialLR
 from torchmetrics import MetricCollection
 from torchmetrics.classification import (
+    BinaryAccuracy,
+    BinaryAUROC,
     BinaryCalibrationError,
+    BinaryConfusionMatrix,
+    BinaryF1Score,
     MulticlassAccuracy,
     MulticlassAUROC,
     MulticlassCohenKappa,
@@ -18,6 +22,7 @@ from torchmetrics.classification import (
     MulticlassPrecision,
     MulticlassRecall,
 )
+from torchvision.ops import sigmoid_focal_loss
 
 from estuary.clay.classifier import Classifier, ConvDecoder, TransformerDecoder
 from estuary.clay.config import EstuaryConfig
@@ -25,10 +30,24 @@ from estuary.clay.config import EstuaryConfig
 logger = logging.getLogger(__name__)
 
 
+class FocalLoss(torch.nn.Module):
+    def __init__(self, alpha: float, gamma: float, reduction: str = "mean"):
+        super().__init__()
+        self.gamma = gamma
+        self.reduction = reduction
+        self.alpha = alpha
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor):
+        return sigmoid_focal_loss(
+            inputs, targets, alpha=self.alpha, gamma=self.gamma, reduction=self.reduction
+        )
+
+
 class EstuaryModule(LightningModule):
     def __init__(self, conf: EstuaryConfig):
         self.conf = conf
         self.num_classes = len(conf.classes)
+        self.is_binary = self.num_classes == 2
 
         super().__init__()
         self.save_hyperparameters(conf)
@@ -59,36 +78,73 @@ class EstuaryModule(LightningModule):
 
         logger.info("Creating metrics")
 
-        metrics_dict = {
-            "f1": MulticlassF1Score(num_classes=self.num_classes),
-            "precision": MulticlassPrecision(num_classes=self.num_classes),
-            "recall": MulticlassRecall(num_classes=self.num_classes),
-            "accuracy": MulticlassAccuracy(num_classes=self.num_classes),
-            "cohenkappa": MulticlassCohenKappa(num_classes=self.num_classes),
-            "auroc": MulticlassAUROC(num_classes=self.num_classes),
-        }
-        # per-class precision vector
-        metrics_dict["precision_perclass"] = MulticlassPrecision(
-            num_classes=self.num_classes, average="none"
-        )
-        metrics = MetricCollection(metrics_dict)
-
-        # metrics_device = "cpu" if using_mps else self.device
-        self.train_metrics = metrics.clone(prefix="train/").to(self.device)
-        self.train_cm = MulticlassConfusionMatrix(num_classes=self.num_classes).to(self.device)
-        self.train_ece = BinaryCalibrationError()
-        self.val_metrics = metrics.clone(prefix="val/").to(self.device)
-        self.val_cm = MulticlassConfusionMatrix(num_classes=self.num_classes).to(self.device)
-        self.val_ece = BinaryCalibrationError()
-        self.test_metrics = metrics.clone(prefix="test/").to(self.device)
-        self.test_cm = MulticlassConfusionMatrix(num_classes=self.num_classes).to(self.device)
-        self.test_ece = BinaryCalibrationError()
-
-        if conf.class_weights is not None:
-            weights = torch.tensor(conf.class_weights, device=self.device)
+        if self.is_binary:
+            # Binary metrics operate on probabilities in [0,1]
+            metrics_dict = {
+                "f1": BinaryF1Score(),
+                "accuracy": BinaryAccuracy(),
+                "auroc": BinaryAUROC(),
+            }
+            self.train_cm = BinaryConfusionMatrix()
+            self.val_cm = BinaryConfusionMatrix()
+            self.test_cm = BinaryConfusionMatrix()
+            self.train_ece = BinaryCalibrationError()
+            self.val_ece = BinaryCalibrationError()
+            self.test_ece = BinaryCalibrationError()
         else:
-            weights = None
-        self.loss_fn = nn.CrossEntropyLoss(label_smoothing=conf.smooth_factor, weight=weights)
+            metrics_dict = {
+                "f1": MulticlassF1Score(num_classes=self.num_classes),
+                "precision": MulticlassPrecision(num_classes=self.num_classes),
+                "recall": MulticlassRecall(num_classes=self.num_classes),
+                "accuracy": MulticlassAccuracy(num_classes=self.num_classes),
+                "cohenkappa": MulticlassCohenKappa(num_classes=self.num_classes),
+                "auroc": MulticlassAUROC(num_classes=self.num_classes),
+            }
+            # per-class precision vector (multiclass only)
+            metrics_dict["precision_perclass"] = MulticlassPrecision(
+                num_classes=self.num_classes, average="none"
+            )
+            self.train_cm = MulticlassConfusionMatrix(num_classes=self.num_classes)
+            self.val_cm = MulticlassConfusionMatrix(num_classes=self.num_classes)
+            self.test_cm = MulticlassConfusionMatrix(num_classes=self.num_classes)
+            self.train_ece = BinaryCalibrationError()
+            self.val_ece = BinaryCalibrationError()
+            self.test_ece = BinaryCalibrationError()
+
+        metrics = MetricCollection(metrics_dict)
+        self.train_metrics = metrics.clone(prefix="train/").to(self.device)
+        self.val_metrics = metrics.clone(prefix="val/").to(self.device)
+        self.test_metrics = metrics.clone(prefix="test/").to(self.device)
+
+        # Loss
+        weights = (
+            torch.tensor(conf.class_weights, device=self.device)
+            if conf.class_weights is not None
+            else None
+        )
+        if self.is_binary:
+            if conf.loss_fn == "ce":
+                # Single-logit BCE with logits. Turn class weights into pos_weight if provided.
+                pos_weight = None
+                if weights is not None and len(weights) == 2:
+                    # CE weights ~ [w0, w1]; BCE pos_weight scales positives.
+                    w0, w1 = weights[0].item(), weights[1].item()
+                    if w0 > 0:
+                        pos_weight = torch.tensor([w1 / w0], device=self.device)
+                self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+            elif conf.loss_fn == "focal":
+                self.loss_fn = FocalLoss(gamma=conf.focal_gamma, alpha=conf.focal_alpha)
+            else:
+                raise RuntimeError(f"Invalid loss_fn {conf.loss_fn}")
+        else:
+            if conf.loss_fn == "ce":
+                self.loss_fn = nn.CrossEntropyLoss(
+                    label_smoothing=conf.smooth_factor, weight=weights
+                )
+            elif conf.loss_fn == "focal":
+                self.loss_fn = FocalLoss(gamma=conf.focal_gamma, alpha=conf.focal_alpha)
+            else:
+                raise RuntimeError(f"Invalid loss_fn {conf.loss_fn}")
 
     def forward(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         return self.model(x)
@@ -113,21 +169,33 @@ class EstuaryModule(LightningModule):
             ece = self.test_ece
 
         batch, target = batch_target
-        pred: torch.Tensor = self(batch)
+        logits: torch.Tensor = self(batch)
 
-        # Loss
-        loss = self.loss_fn(pred, target)
+        if self.is_binary:
+            # logits: [B, 1]; targets: int {0,1}
+            logits = logits.view(-1)
+            target_f = target.float()
+            loss = self.loss_fn(logits, target_f)
+            probs_pos = torch.sigmoid(logits)
 
-        # Grouped Metrics
-        metrics.update(pred, target)
+            # Metrics expect probabilities for binary tasks
+            metrics.update(probs_pos, target)
+            # Confusion matrix uses hard labels
+            preds_label = (probs_pos >= 0.5).long()
+            cm.update(preds_label, target)
 
-        # Confusion Matrix
-        cm.update(pred, target)
+            # ECE on positive class
+            ece.update(probs_pos, target)
+        else:
+            # Multiclass: logits [B, C]
+            loss = self.loss_fn(logits, target)
+            metrics.update(logits, target)  # torchmetrics multiclass can accept logits
+            cm.update(logits.argmax(dim=1), target)
 
-        # Closed ECE
-        assert self.conf.classes.index("closed") == 1
-        probs = torch.softmax(pred, dim=1)[:, 1]
-        ece.update(probs, target)
+            # Closed ECE assumes index 1 is 'closed'
+            assert self.conf.classes.index("closed") == 1
+            probs = torch.softmax(logits, dim=1)[:, 1]
+            ece.update(probs, target)
 
         self.log_dict(
             {f"{train_test_val}/loss": loss},

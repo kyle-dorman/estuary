@@ -9,6 +9,8 @@ from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
+from rich import get_console
+from rich.table import Column, Table
 
 from estuary.clay.config import EstuaryConfig
 from estuary.clay.data import EstuaryDataModule, calc_class_weights
@@ -48,13 +50,14 @@ def main() -> None:
     # (model_dir / "wandb").mkdir(exist_ok=True)
 
     # Setup logger
-    setup_logger(logger, model_dir, log_file_name)
+    setup_logger(model_dir, log_file_name)
 
     logger.info(f"Saving results to {model_dir}")
     logger.info(f"Training classification model with classes {conf.classes}")
 
     # Add dynamic class weights
-    conf.class_weights = calc_class_weights(conf)
+    if conf.use_class_weights:
+        conf.class_weights = calc_class_weights(conf)
 
     # Load model and data
     model = EstuaryModule(conf)
@@ -111,12 +114,18 @@ def main() -> None:
         # wandb_logger.log_hyperparams(dict(conf))  # type: ignore
 
     # Train!
-    trainer.fit(model=model, datamodule=datamodule, ckpt_path="last")
-    trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
+    trainer.fit(model=model, datamodule=datamodule)
 
-    if trainer.is_global_zero:
-        with open(model_dir / "classes.txt", "w") as f:
-            f.write("\n".join(conf.classes))
+    # Test!
+    results = trainer.test(model=model, datamodule=datamodule, ckpt_path="best", verbose=False)[0]
+    columns = [
+        Column("Metric", justify="center", style="cyan", width=20),
+        Column("Value", justify="center", style="magenta", width=9),
+    ]
+    table = Table(*columns)
+    for metric, v in results.items():
+        table.add_row(metric.split("/")[-1], f"{v:.3f}")
+    get_console().print(table)
 
     logger.info("Done!")
 

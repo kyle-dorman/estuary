@@ -40,7 +40,8 @@ class ConvDecoder(nn.Module):
             ]
         self.conv_blocks = nn.Sequential(*blocks)
         self.pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Linear(conf.decoder_dim, len(conf.classes))
+        out_dim = 1 if len(conf.classes) == 2 else len(conf.classes)
+        self.fc = nn.Linear(conf.decoder_dim, out_dim)
         self.dropout = nn.Dropout(p=conf.dropout)
 
         # ---------------------
@@ -94,7 +95,8 @@ class TransformerDecoder(nn.Module):
             else nn.Identity()
         )
         self.cls_token = nn.Parameter(torch.randn(1, 1, conf.decoder_dim) * 0.02)
-        self.classifier = nn.Linear(conf.decoder_dim, len(conf.classes))
+        out_dim = 1 if len(conf.classes) == 2 else len(conf.classes)
+        self.classifier = nn.Linear(conf.decoder_dim, out_dim)
         self.dropout = nn.Dropout(p=conf.dropout)
         self.transformer = Transformer(
             dim=conf.decoder_dim,

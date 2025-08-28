@@ -48,6 +48,7 @@ class EstuaryConfig:
 
     horizontal_flip: float = 0.5
     vertical_flip: float = 0.5
+    min_scale: float = 0.9
     metadata_path: Path = Path("/Users/kyledorman/data/models/clay/metadata.yaml")
 
     test_year: int | None = None  # default: max year in data
@@ -68,6 +69,10 @@ class EstuaryConfig:
     gamma: float = 0.9
     gradient_clip_val: float = 1.0
     gradient_clip_algorithm: str | None = "norm"
+    loss_fn: str = "ce"
+    focal_gamma: float = 2.0
+    focal_alpha: float = 0.25
 
     # class_weights will be computed from training set and injected
+    use_class_weights: bool = True
     class_weights: tuple[float, ...] | None = None

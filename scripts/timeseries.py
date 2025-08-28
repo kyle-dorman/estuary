@@ -13,11 +13,11 @@ from estuary.clay.module import EstuaryModule
 BASE = Path("/Users/kyledorman/data/estuary/dove/results")
 LABELS_PATH = Path("/Users/kyledorman/data/estuary/label_studio/00025/labels.csv")
 CROP_PATH = Path("/Users/kyledorman/data/estuary/label_studio/region_crops.json")
-VALID_PATH = Path("/Users/kyledorman/data/estuary/validv3.csv")
-SAVE_PATH = Path("/Users/kyledorman/data/estuary/predsv3.csv")
 MODEL_PATH = Path(
-    "/Users/kyledorman/data/results/estuary/train/20250805-205230/checkpoints/last.ckpt"
+    "/Users/kyledorman/data/results/estuary/train/20250827-145944/checkpoints/last.ckpt"
 )
+VALID_PATH = MODEL_PATH.parent.parent / "valid.csv"
+SAVE_PATH = MODEL_PATH.parent.parent / "preds.csv"
 
 MIN_CLEAR = 0.90
 
@@ -53,21 +53,17 @@ def main():
                     if yes_data_pct < MIN_CLEAR:
                         continue
 
-                valid_files.append((region, udm, tif_path, 0, 0, 0.0))
+                valid_files.append((region, udm, tif_path, 0, 0, 0.0, parse_dt_from_pth(tif_path)))
 
         valid_df = pd.DataFrame(
-            valid_files, columns=["region", "udm_path", "source_tif", "label_idx", "pred", "conf"]
+            valid_files,
+            columns=["region", "udm_path", "source_tif", "label_idx", "pred", "conf", "acquired"],
         )
+        valid_df["acquired"] = pd.to_datetime(valid_df["acquired"], errors="coerce")
+        valid_df = valid_df.sort_values(by=["region", "acquired"]).reset_index(drop=True)
         valid_df.to_csv(VALID_PATH, index=False)
     else:
         valid_df = pd.read_csv(VALID_PATH)
-
-    valid_df["acquired"] = valid_df.source_tif.apply(lambda a: parse_dt_from_pth(Path(a)))
-    valid_df["acquired"] = pd.to_datetime(valid_df["acquired"], errors="coerce")
-    valid_df = valid_df.sort_values(by=["region", "acquired"]).reset_index()
-    # valid_df = valid_df[valid_df.region == "big_sur_river"]
-    # valid_df = valid_df.copy(deep=True)
-    # valid_df = valid_df.reset_index()
 
     module = EstuaryModule.load_from_checkpoint(MODEL_PATH, batch_size=1).eval()
     module.conf.holdout_region = None
