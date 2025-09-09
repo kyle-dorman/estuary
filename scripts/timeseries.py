@@ -1,8 +1,10 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import rasterio
+import torch
 import torch.nn.functional as F
 import tqdm
 from torch.utils.data import DataLoader
@@ -14,7 +16,7 @@ BASE = Path("/Users/kyledorman/data/estuary/dove/results")
 LABELS_PATH = Path("/Users/kyledorman/data/estuary/label_studio/00025/labels.csv")
 CROP_PATH = Path("/Users/kyledorman/data/estuary/label_studio/region_crops.json")
 MODEL_PATH = Path(
-    "/Users/kyledorman/data/results/estuary/train/20250827-145944/checkpoints/last.ckpt"
+    "/Users/kyledorman/data/results/estuary/train/20250828-144342/checkpoints/last.ckpt"
 )
 VALID_PATH = MODEL_PATH.parent.parent / "valid.csv"
 SAVE_PATH = MODEL_PATH.parent.parent / "preds.csv"
@@ -64,6 +66,7 @@ def main():
         valid_df.to_csv(VALID_PATH, index=False)
     else:
         valid_df = pd.read_csv(VALID_PATH)
+        valid_df["acquired"] = pd.to_datetime(valid_df["acquired"], errors="coerce")
 
     module = EstuaryModule.load_from_checkpoint(MODEL_PATH, batch_size=1).eval()
     module.conf.holdout_region = None
@@ -85,9 +88,17 @@ def main():
                 datacube[k] = v.to(module.device)
 
         logits = module(datacube)
-        probs = F.softmax(logits, dim=1).detach().cpu().numpy()
-        valid_df.loc[bi, "pred"] = int(probs.argmax(axis=1).tolist()[0])
-        valid_df.loc[bi, "conf"] = probs[0, 0].item()
+        if logits.shape[1] == 1:
+            probs = torch.sigmoid(logits).detach().cpu().numpy()
+            preds = (probs > 0.15)[0].astype(np.int32).item()
+            probs = probs[0].item()
+        else:
+            probs = F.softmax(logits, dim=1).detach().cpu().numpy()
+            preds = probs.argmax(axis=1).tolist()[0].item()
+            probs = probs[0, 0].item()
+
+        valid_df.loc[bi, "pred"] = preds
+        valid_df.loc[bi, "conf"] = probs
 
     valid_df.to_csv(SAVE_PATH, index=False)
 

@@ -62,7 +62,6 @@ def make_plot(
     # Ensure proper types
     g["acquired"] = pd.to_datetime(g["acquired"], errors="coerce")
     g = g.dropna(subset=["acquired"]).sort_values("acquired")
-    g["pred"] = g["pred"].astype(int)
 
     # Index by time
     g = g.set_index("acquired")
@@ -106,23 +105,23 @@ def make_plot(
         zorder=3,
     )
 
-    # # Confidence as a smoothed line on a twin y-axis (0..1)
-    # if "conf" in g.columns:
-    #     g["conf"] = pd.to_numeric(g["conf"], errors="coerce").clip(0, 1)
-    #     conf_smooth = g["conf"].rolling(f"{conf_smooth_days}D", min_periods=1, center=True).mean()
-    #     ax2 = ax.twinx()
-    #     ax2.plot(
-    #         g.index,
-    #         conf_smooth.to_numpy(),
-    #         color="#4c78a8",
-    #         alpha=0.8,
-    #         linewidth=1.8,
-    #         zorder=1,
-    #     )
-    #     ax2.set_ylim(0.0, 1.0)
-    #     ax2.set_yticks([0.0, 0.5, 1.0])
-    #     ax2.set_ylabel("confidence", fontsize=8)
-    #     ax2.grid(False)
+    # Confidence as a smoothed line on a twin y-axis (0..1)
+    if "conf" in g.columns:
+        conf = 1 - pd.to_numeric(g["conf"], errors="coerce").clip(0, 1)
+        conf_smooth = conf.rolling(f"{conf_smooth_days}D", min_periods=1, center=True).mean()
+        ax2 = ax.twinx()
+        ax2.plot(
+            g.index,
+            conf_smooth.to_numpy(),
+            color="#4c78a8",
+            alpha=0.8,
+            linewidth=1.8,
+            zorder=1,
+        )
+        ax2.set_ylim(0.0, 1.0)
+        ax2.set_yticks([0.0, 0.5, 1.0])
+        ax2.set_ylabel("confidence", fontsize=8)
+        ax2.grid(False)
 
     # Formatting for predictions axis
     ax.set_ylim(-0.25, 1.25)
@@ -239,7 +238,7 @@ def main() -> None:
     ap.add_argument(
         "--conf-smooth-days",
         type=int,
-        default=20,
+        default=10,
         help="Rolling window (days) for confidence smoothing",
     )
     ap.add_argument("--region", type=str, default=None, help="If set, only plot this region")
@@ -254,7 +253,10 @@ def main() -> None:
     labels_df = labels_df[labels_df.label.isin(["open", "closed"])].copy(deep=True).reset_index()
 
     df = pd.read_csv(args.preds)
-    df["pred"] = 1 - df.pred
+    thresholds = pd.read_csv(Path(args.preds).parent / "thresholds.csv")
+    for _, row in thresholds.iterrows():
+        k = df.region == row.region
+        df.loc[k, "pred"] = 1 - (df[k].conf >= row.best_threshold).astype(int)
     df = add_acquired(df)
     labels_df = add_acquired(labels_df)
 

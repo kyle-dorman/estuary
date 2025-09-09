@@ -1,27 +1,27 @@
 #!/bin/bash
 
 # ---------------- USER CONFIG ----------------
-EPOCHS=40
+EPOCHS=100
 DEBUG=false
 patience=20
 
 # List of region identifiers (case-sensitive, must match CSV)
 REGIONS=(
-# goleta
-# malibu_lagoon
-# ventura
+goleta
+malibu_lagoon
+ventura
 topanga
-big_sur_river
-carmel
-little_sur
-los_penasquitos_lagoon
-navarro_river
-pismo_creek_lagoon
-russian_river
-san_dieguito_lagoon
-san_elijo_lagoon
-san_mateo_lagoon
-santa_margarita
+# big_sur_river
+# carmel
+# little_sur
+# los_penasquitos_lagoon
+# navarro_river
+# pismo_creek_lagoon
+# russian_river
+# san_dieguito_lagoon
+# san_elijo_lagoon
+# san_mateo_lagoon
+# santa_margarita
 )
 # ---------------------------------------------
 
