@@ -31,6 +31,7 @@ dependencies = [
     "pandas",
     "pillow",
     "pyproj>=3.7.1",
+    "python-dotenv>=1.1.1",
     "rasterio",
     "requests>=2.32.4",
     "scikit-image>=0.25.2",

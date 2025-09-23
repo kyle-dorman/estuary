@@ -265,7 +265,7 @@ def main(
             save_parquet_partitioned(all_df, outdir)
 
             # Write minimal station metadata once per site
-            meta = all_df[["site_no", "station_nm"]].drop_duplicates()
+            meta = all_df[["site_no", "station_nm", "parameter_cd"]].drop_duplicates()
             mdir = outdir / site
             mdir.mkdir(parents=True, exist_ok=True)
             (mdir / "site_metadata.json").write_text(meta.to_json(orient="records", indent=2))

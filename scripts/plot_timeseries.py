@@ -14,8 +14,6 @@ Usage:
       --window-days 7 --dpi 300
 """
 
-from __future__ import annotations
-
 import argparse
 from pathlib import Path
 
@@ -25,6 +23,48 @@ import tqdm
 from matplotlib.dates import ConciseDateFormatter, MonthLocator
 
 from estuary.clay.data import parse_dt_from_pth
+
+USGS_MAP = {
+    "russian_river": "11467270",
+    "santa_margarita": "11046050",
+    "san_mateo_lagoon": "11046325",
+}
+USGS_PATH = Path("/Users/kyledorman/data/estuary/usgs")
+
+
+def load_usgs_param_parquet(
+    site_no: str, param: str, start_dt: pd.Timestamp | None, end_dt: pd.Timestamp | None
+) -> pd.DataFrame:
+    """Load partitioned Parquet time series for a USGS site/param and clip to [start_dt, end_dt].
+    Expects directory structure: USGS_PATH/site_no=XXXX/parameter_cd=YYYYY/*.parquet
+    Returns a DataFrame with columns [datetime, value] sorted by datetime.
+    """
+    pdir = USGS_PATH / site_no / param
+    if not pdir.exists():
+        return pd.DataFrame(columns=["datetime", "value"]).astype({"datetime": "datetime64[ns]"})
+    parts = list(pdir.glob("*.parquet"))
+    if not parts:
+        return pd.DataFrame(columns=["datetime", "value"]).astype({"datetime": "datetime64[ns]"})
+    frames = []
+    for fp in parts:
+        try:
+            dfp = pd.read_parquet(fp)
+            if {"datetime", "value"}.issubset(dfp.columns):
+                frames.append(dfp[["datetime", "value"]])
+        except Exception:
+            continue
+    if not frames:
+        return pd.DataFrame(columns=["datetime", "value"]).astype({"datetime": "datetime64[ns]"})
+    df = pd.concat(frames, ignore_index=True)
+    # Ensure datetime is timezone-naive in UTC for matplotlib consistency
+    dtcol = pd.to_datetime(df["datetime"], errors="coerce", utc=True)
+    df["datetime"] = dtcol.dt.tz_convert("UTC").dt.tz_localize(None)
+    df = df.dropna(subset=["datetime"]).sort_values("datetime").reset_index(drop=True)
+    if start_dt is not None:
+        df = df[df["datetime"] >= pd.to_datetime(start_dt)]
+    if end_dt is not None:
+        df = df[df["datetime"] <= pd.to_datetime(end_dt)]
+    return df
 
 
 def add_acquired(df):
@@ -180,6 +220,26 @@ def make_plot(
                     linewidths=0.5,
                     zorder=3,
                 )
+
+        # Overlay USGS gage height (00065) if this region maps to a USGS site
+        site_no = USGS_MAP.get(region)
+        if site_no:
+            usgs_df = load_usgs_param_parquet(site_no, "00065", start_dt, end_dt)
+            if not usgs_df.empty:
+                # Downsample to hourly median to keep plots light
+                tmp = usgs_df.set_index("datetime")["value"].resample("1H").median().dropna()
+                # # Thin for speed if extremely dense: plot at ~15-min to 1-hr as-is; otherwise
+                # # resample to daily median
+                # # Decide based on median spacing
+                # if len(usgs_df) > 50000:
+                #     # Downsample to hourly median to keep plots light
+                #     tmp = usgs_df.set_index("datetime")["value"].resample("1H").median().dropna()
+                # else:
+                #     tmp = usgs_df.set_index("datetime")["value"]
+                ax_lab2 = ax_lab.twinx()
+                ax_lab2.plot(tmp.index, tmp.values, linewidth=0.5, alpha=0.8)
+                ax_lab2.set_ylabel("USGS Gage Height (ft)", fontsize=8)
+                ax_lab2.grid(False)
 
         ax_lab.set_ylim(-0.25, 1.25)
         ax_lab.set_yticks([0, 1])

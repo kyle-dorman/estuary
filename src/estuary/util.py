@@ -60,20 +60,54 @@ def masked_contrast_stretch(
     return image
 
 
-def tif_to_rgb(pth: Path) -> np.ndarray:
-    with rasterio.open(pth) as src:
-        data = src.read(out_dtype=np.float32)
-        nodata = src.read(1, masked=True).mask
-    data = np.log10(data + 1)
+def broad_band(data: np.ndarray, nodata: np.ndarray) -> np.ndarray:
+    red_recipe = np.mean(data[4:8], axis=0)
+    green_recipe = np.mean(data[2:4], axis=0)
+    blue_recipe = data[1]
+
+    rgb = np.dstack((red_recipe, green_recipe, blue_recipe))
+
+    rgb = masked_contrast_stretch(rgb.transpose((2, 0, 1)), ~nodata, p_low=0, p_high=99).transpose(
+        (1, 2, 0)
+    )
+
+    rgb[nodata] = 0.0
+
+    k = 2.2
+    rgb = np.tanh(k * rgb) / np.tanh(k)
+
+    img = np.array(rgb * 255, dtype=np.uint8)
+
+    return img
+
+
+def false_color(data: np.ndarray, nodata: np.ndarray):
     imgd = masked_contrast_stretch(data, ~nodata, p_low=1, p_high=99)
 
     img = np.zeros((*imgd.shape[1:], 3), dtype=imgd.dtype)
     img[:, :, 0] = imgd[3]
     img[:, :, 1] = imgd[2]
-    img[:, :, 2] = imgd[:2].max(axis=0)
+    img[:, :, 2] = imgd[1]
     img[nodata] = 0
+
+    k = 1.5
+    img = np.tanh(k * img) / np.tanh(k)
+
     img = np.array(img * 255, dtype=np.uint8)
+
     return img
+
+
+def tif_to_rgb(pth: Path) -> np.ndarray:
+    with rasterio.open(pth) as src:
+        data = src.read(out_dtype=np.float32)
+        nodata = src.read(1, masked=True).mask
+        if nodata.all():
+            return np.zeros((*nodata.shape, 3), dtype=np.uint8)
+
+        if len(data) == 4:
+            return false_color(data, nodata)
+        return broad_band(data, nodata)
 
 
 def setup_logger(save_dir: Path | None = None, log_filename: str = "log.log"):
