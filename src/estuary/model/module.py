@@ -24,8 +24,9 @@ from torchmetrics.classification import (
 )
 from torchvision.ops import sigmoid_focal_loss
 
-from estuary.clay.classifier import Classifier, ConvDecoder, TransformerDecoder
-from estuary.clay.config import EstuaryConfig
+from estuary.clay.classifier import ClayClassifier, ClayConvDecoder, ClayTransformerDecoder
+from estuary.model.config import EstuaryConfig
+from estuary.model.timm_model import TimmModel
 
 logger = logging.getLogger(__name__)
 
@@ -52,26 +53,34 @@ class EstuaryModule(LightningModule):
         super().__init__()
         self.save_hyperparameters(conf)
 
-        clay_model = ClayMAEModule.load_from_checkpoint(
-            conf.encoder_weights,
-            metadata_path=conf.metadata_path,
-            strict=False,
-            mask_ratio=0.0,
-            shuffle=False,
-        )
-        if conf.freeze_encoder:
-            clay_model = clay_model.eval()
-        encoder = clay_model.model.encoder
-        # Freeze the encoder parameters
-        if conf.freeze_encoder:
-            for param in encoder.parameters():
-                param.requires_grad = False
-        assert encoder.dim == conf.encoder_dim
-        decoder = ConvDecoder(conf) if conf.decoder_name == "conv" else TransformerDecoder(conf)
-        clf = Classifier(encoder, decoder)
+        if conf.model_type == "clay":
+            clay_model = ClayMAEModule.load_from_checkpoint(
+                conf.clay_encoder_weights,
+                metadata_path=conf.metadata_path,
+                strict=False,
+                mask_ratio=0.0,
+                shuffle=False,
+            )
+            if conf.freeze_encoder:
+                clay_model = clay_model.eval()
+            encoder = clay_model.model.encoder
+            # Freeze the encoder parameters
+            if conf.freeze_encoder:
+                for param in encoder.parameters():
+                    param.requires_grad = False
+            assert encoder.dim == conf.encoder_dim
+            decoder = (
+                ClayConvDecoder(conf)
+                if conf.decoder_name == "conv"
+                else ClayTransformerDecoder(conf)
+            )
+            clf = ClayClassifier(encoder, decoder)
+        elif conf.model_type == "timm":
+            clf = TimmModel(conf)
+        else:
+            raise RuntimeError(f"Unsupported model_type {conf.model_type}")
 
-        using_mps = torch.backends.mps.is_available() and conf.accelerator in ["mps", "auto"]
-        if conf.debug or using_mps:
+        if conf.debug or not conf.compile:
             self.model = clf
         else:
             self.model = torch.compile(clf)  # type: ignore

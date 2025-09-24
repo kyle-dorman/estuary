@@ -10,7 +10,7 @@ import tqdm
 from torch.utils.data import DataLoader
 
 from estuary.clay.data import EstuaryDataset, parse_dt_from_pth
-from estuary.clay.module import EstuaryModule
+from estuary.model.module import EstuaryModule
 
 BASE = Path("/Users/kyledorman/data/estuary/dove/results")
 LABELS_PATH = Path("/Users/kyledorman/data/estuary/label_studio/00025/labels.csv")

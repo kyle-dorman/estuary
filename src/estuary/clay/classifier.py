@@ -3,10 +3,10 @@ import torch.nn as nn
 from claymodel.backbone import Transformer
 from claymodel.model import Encoder
 
-from estuary.clay.config import EstuaryConfig
+from estuary.model.config import EstuaryConfig
 
 
-class ConvDecoder(nn.Module):
+class ClayConvDecoder(nn.Module):
     """
     A lightweight CNN head that maps ViT patch embeddings to class logits.
 
@@ -80,7 +80,7 @@ class ConvDecoder(nn.Module):
                 nn.init.zeros_(m.bias)
 
 
-class TransformerDecoder(nn.Module):
+class ClayTransformerDecoder(nn.Module):
     def __init__(
         self,
         conf: EstuaryConfig,
@@ -142,11 +142,11 @@ class TransformerDecoder(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
 
-class Classifier(nn.Module):
+class ClayClassifier(nn.Module):
     def __init__(
         self,
         encoder: Encoder,
-        decoder: TransformerDecoder | ConvDecoder,
+        decoder: ClayTransformerDecoder | ClayConvDecoder,
     ):
         super().__init__()
 

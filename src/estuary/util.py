@@ -81,14 +81,20 @@ def broad_band(data: np.ndarray, nodata: np.ndarray) -> np.ndarray:
     return img
 
 
-def false_color(data: np.ndarray, nodata: np.ndarray):
-    imgd = masked_contrast_stretch(data, ~nodata, p_low=1, p_high=99)
+def normalized_image_3_channel(
+    data: np.ndarray, nodata: np.ndarray, bands: tuple[int, int, int]
+) -> np.ndarray:
+    img = np.array([data[b] for b in bands])
+    img = masked_contrast_stretch(img, ~nodata, p_low=1, p_high=99)
 
-    img = np.zeros((*imgd.shape[1:], 3), dtype=imgd.dtype)
-    img[:, :, 0] = imgd[3]
-    img[:, :, 1] = imgd[2]
-    img[:, :, 2] = imgd[1]
-    img[nodata] = 0
+    for i in range(3):
+        img[:, :, i][nodata] = 0
+
+    return img
+
+
+def false_color(data: np.ndarray, nodata: np.ndarray):
+    img = normalized_image_3_channel(data, nodata, (3, 2, 1)).transpose((1, 2, 0))
 
     k = 1.5
     img = np.tanh(k * img) / np.tanh(k)
