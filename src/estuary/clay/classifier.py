@@ -11,9 +11,8 @@ class ClayConvDecoder(nn.Module):
     A lightweight CNN head that maps ViT patch embeddings to class logits.
 
     Args:
-        num_classes:   # output categories
-        encoder_dim:   # embedding dim from encoder (default 1024)
-        dim:           # internal conv feature dim (bottleneck)
+        conf:           # config
+        num_classes:    # output categories
     Input:
         x: Tensor[B, L, encoder_dim]  # L = H_patches*W_patches
     Output:
@@ -23,6 +22,7 @@ class ClayConvDecoder(nn.Module):
     def __init__(
         self,
         conf: EstuaryConfig,
+        num_classes: int,
     ) -> None:
         super().__init__()
 
@@ -40,8 +40,7 @@ class ClayConvDecoder(nn.Module):
             ]
         self.conv_blocks = nn.Sequential(*blocks)
         self.pool = nn.AdaptiveAvgPool2d(1)
-        out_dim = 1 if len(conf.classes) == 2 else len(conf.classes)
-        self.fc = nn.Linear(conf.decoder_dim, out_dim)
+        self.fc = nn.Linear(conf.decoder_dim, num_classes)
         self.dropout = nn.Dropout(p=conf.dropout)
 
         # ---------------------
@@ -84,6 +83,7 @@ class ClayTransformerDecoder(nn.Module):
     def __init__(
         self,
         conf: EstuaryConfig,
+        num_classes: int,
     ):
         super().__init__()
         self.encoder_dim = conf.encoder_dim
@@ -95,8 +95,7 @@ class ClayTransformerDecoder(nn.Module):
             else nn.Identity()
         )
         self.cls_token = nn.Parameter(torch.randn(1, 1, conf.decoder_dim) * 0.02)
-        out_dim = 1 if len(conf.classes) == 2 else len(conf.classes)
-        self.classifier = nn.Linear(conf.decoder_dim, out_dim)
+        self.classifier = nn.Linear(conf.decoder_dim, num_classes)
         self.dropout = nn.Dropout(p=conf.dropout)
         self.transformer = Transformer(
             dim=conf.decoder_dim,

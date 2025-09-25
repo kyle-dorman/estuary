@@ -11,8 +11,13 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import v2
 
 from estuary.model.config import Bands, EstuaryConfig
-from estuary.model.data import create_splits, load_tif, normalize_timestamp, num_workers
-from scripts.embeddings_clay import normalize_latlon
+from estuary.model.data import (
+    create_splits,
+    load_tif,
+    normalize_latlon,
+    normalize_timestamp,
+    num_workers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,16 +137,16 @@ class ClayEstuaryDataset(Dataset):
         tfs: list[v2.Transform] = []
         if train:
             tfs += [
-                v2.RandomHorizontalFlip(conf.horizontal_flip),
-                v2.RandomVerticalFlip(conf.vertical_flip),
+                v2.RandomHorizontalFlip(conf.horizontal_flip_p),
+                v2.RandomVerticalFlip(conf.vertical_flip_p),
                 v2.RandomResizedCrop(
-                    size=(conf.chip_size, conf.chip_size),
-                    scale=(conf.min_scale, 1.0),
+                    size=(conf.train_size, conf.train_size),
+                    scale=conf.scale,
                     antialias=True,
                 ),
             ]
         tfs += [
-            v2.Resize(size=(conf.chip_size, conf.chip_size), interpolation=3),
+            v2.Resize(size=(conf.train_size, conf.train_size), interpolation=3),
             v2.Normalize(mean=mean, std=std),
         ]
         self.transforms = v2.Compose(tfs)

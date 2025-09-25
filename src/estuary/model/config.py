@@ -1,11 +1,16 @@
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Literal
 
 from estuary.constants import EIGHT_TO_4, FALSE_COLOR_4, FALSE_COLOR_8, RGB_4, RGB_8
 
 CLASSES = ("closed", "open")
+
+
+# ModelType Enum for selecting model type
+class ModelType(Enum):
+    CLAY = "clay"
+    TIMM = "timm"
 
 
 class Bands(Enum):
@@ -83,15 +88,17 @@ class EstuaryConfig:
 
     epochs: int = 1
     grad_accum_steps: int = 1
-    log_every_n_steps: int = 16 * 2
-    log_image_every_n_epochs: int = 10
-    precision: str = "bf16-mixed"
+    log_every_n_steps: int = 4
+    precision: str = "16-mixed"
     batch_size: int = 16
     workers: int = 0
     pin_memory: bool = False
     persistent_workers: bool = True
+    prefetch_factor: int = 0
+    preview_n: int = 9
+    preview_channels: tuple[int, int, int] = (0, 1, 2)
 
-    model_type: Literal["clay", "timm"] = "timm"
+    model_type: ModelType = ModelType.TIMM
     model_name: str = "resnet18"
     pretrained: bool = True
     clay_encoder_weights: Path = Path("/Users/kyledorman/data/models/clay/clay-v1.5.ckpt")
@@ -104,6 +111,7 @@ class EstuaryConfig:
     decoder_dim_head: int = 48
     decoder_mlp_ratio: int = 2
     dropout: float = 0.1
+    drop_path: float = 0.1
     train_size: int = 256
     val_size: int = 256
     world_size: int = 1
@@ -136,16 +144,14 @@ class EstuaryConfig:
     channel_shift_limit: float = 0.2
     channel_shift_p: float = 0.1
 
-    min_rows_per_split: int = 50  # sanity check
-
-    lr: float = 1e-3
-    base_lr_batch_size: int = 16
+    lr: float = 1e-4
+    base_lr_batch_size: int = 128
     warmup_epochs: int = 2
-    init_lr: float = 2.0e-4
-    min_lr: float = 1e-5
+    init_lr: float = 1e-5
+    min_lr: float = 1e-6
     patience: int = 5
     optimizer: str = "adamw"
-    weight_decay: float = 1e-4
+    weight_decay: float = 1e-5
     scheduler: str = "cosine"
     gamma: float = 0.9
     gradient_clip_val: float = 1.0

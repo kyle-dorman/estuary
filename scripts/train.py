@@ -6,14 +6,14 @@ from pathlib import Path
 
 import torch
 from lightning.pytorch import Trainer, seed_everything
-from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
 from rich import get_console
 from rich.table import Column, Table
 
 from estuary.clay.data import ClayEstuaryDataModule
-from estuary.model.config import EstuaryConfig
+from estuary.model.config import EstuaryConfig, ModelType
 from estuary.model.data import EstuaryDataModule, calc_class_weights
 from estuary.model.module import EstuaryModule
 from estuary.util import setup_logger
@@ -62,7 +62,7 @@ def main() -> None:
 
     # Load model and data
     model = EstuaryModule(conf)
-    if conf.model_type == "clay":
+    if conf.model_type == ModelType.CLAY:
         datamodule = ClayEstuaryDataModule(conf)
     else:
         datamodule = EstuaryDataModule(conf)
@@ -78,11 +78,11 @@ def main() -> None:
         save_last=True,
     )
     lr_monitor = LearningRateMonitor(logging_interval="epoch")
-    early_stop = EarlyStopping(
-        monitor=conf.monitor_metric,
-        mode=conf.monitor_mode,
-        patience=conf.patience,
-    )
+    # early_stop = EarlyStopping(
+    #     monitor=conf.monitor_metric,
+    #     mode=conf.monitor_mode,
+    #     patience=conf.patience,
+    # )
 
     # bs_finder = BatchSizeFinder()
     # device_stats = DeviceStatsMonitor()
@@ -98,7 +98,7 @@ def main() -> None:
         default_root_dir=model_dir,
         precision=conf.precision,  # type: ignore
         logger=[tensorboard_logger, csv_logger],  # wandb_logger,
-        callbacks=[checkpoint_callback, lr_monitor, early_stop],  # bs_finder, device_stats
+        callbacks=[checkpoint_callback, lr_monitor],  # early_stop, bs_finder, device_stats
         deterministic=conf.deterministic,
         devices=devices,
         accelerator=conf.accelerator,

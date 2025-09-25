@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -11,10 +12,10 @@ import numpy as np
 import pandas as pd
 import rasterio
 import torch
+from kornia.constants import Resample
 from lightning.pytorch import LightningDataModule
 from pyproj import Transformer
 from torch.utils.data import DataLoader, Dataset
-from torchvision.transforms import v2
 
 from estuary.model.config import (
     Bands,
@@ -100,6 +101,11 @@ def create_splits(
     logger.info(
         "Split sizes -> train: %d, val: %d, test: %d", len(df_train), len(df_val), len(df_test)
     )
+    if verbose:
+        logger.info("Train Class Split")
+        logger.info(df_train["label_idx"].value_counts())
+        logger.info("Val Class Split")
+        logger.info(df_val["label_idx"].value_counts())
     return df_train, df_val, df_test
 
 
@@ -174,6 +180,36 @@ def normalize_timestamp(date: datetime.datetime) -> tuple[tuple[float, float], t
     return (math.sin(week), math.cos(week)), (math.sin(hour), math.cos(hour))
 
 
+@dataclass
+class NormalizationStats:
+    power_scale: bool
+    max_pixel_value: int
+    mean: np.ndarray
+    std: np.ndarray
+    lambdas: np.ndarray
+
+
+def load_normalization(conf: EstuaryConfig) -> NormalizationStats:
+    assert conf.normalization_path is not None
+    with open(conf.normalization_path) as f:
+        stats = json.load(f)
+        power_scale = bool(stats["power_scale"])
+        max_pixel_value = int(stats["max_raw_pixel_value"])
+
+        idxes = conf.bands.eight_band_idxes()
+        mean = np.array([stats["means"][i] for i in idxes])
+        std = np.array([stats["stds"][i] for i in idxes])
+        lambdas = np.array([stats["lambdas"][i] for i in idxes])
+
+        return NormalizationStats(
+            power_scale=power_scale,
+            max_pixel_value=max_pixel_value,
+            mean=mean,
+            std=std,
+            lambdas=lambdas,
+        )
+
+
 # -------------------------------------------------
 # Dataset
 # -------------------------------------------------
@@ -196,31 +232,34 @@ class EstuaryDataset(Dataset):
         self.df = df.reset_index(drop=True)
         self.conf = conf
         self.train = train
-        assert conf.normalization_path is not None
-        with open(conf.normalization_path) as f:
-            stats = json.load(f)
-            self.power_scale: bool = stats["power_scale"]
-            self.max_pixel_value = int(stats["max_raw_pixel_value"])
+        self.norm_stats = load_normalization(conf)
 
-            idxes = conf.bands.eight_band_idxes()
-            self.mean = np.array([stats["means"][i] for i in idxes])
-            self.std = np.array([stats["stds"][i] for i in idxes])
-            self.lambdas = np.array([stats["lambdas"][i] for i in idxes])
+        if train:
+            self.resize_aug = K.RandomResizedCrop(
+                (self.conf.train_size, self.conf.train_size),
+                scale=self.conf.scale,
+                resample=Resample.BICUBIC,
+            )
+        else:
+            self.resize_aug = K.Resize(
+                size=(conf.val_size, conf.val_size), resample=Resample.BICUBIC, antialias=True
+            )
 
         augs: list[Any] = []
-        if self.power_scale:
-            augs.append(PowerTransformTorch(self.lambdas.tolist(), self.max_pixel_value))
+        if self.norm_stats.power_scale:
+            augs.append(
+                PowerTransformTorch(
+                    self.norm_stats.lambdas.tolist(), self.norm_stats.max_pixel_value
+                )
+            )
         else:
-            augs.append(ScaleNormalization(self.max_pixel_value))
+            augs.append(ScaleNormalization(self.norm_stats.max_pixel_value))
 
         if train:
             augs += [
                 K.RandomVerticalFlip(p=self.conf.vertical_flip_p),
                 K.RandomHorizontalFlip(p=self.conf.horizontal_flip_p),
                 K.RandomRotation90((0, 3), p=conf.rotation_p),
-                K.RandomResizedCrop(
-                    (self.conf.train_size, self.conf.train_size), scale=self.conf.scale
-                ),
                 K.RandomBrightness(
                     brightness=(max(0, 1 - conf.brightness), 1 + conf.brightness),
                     p=conf.brightness_p,
@@ -246,18 +285,18 @@ class EstuaryDataset(Dataset):
                     p=self.conf.channel_shift_p,
                 ),
                 K.RandomErasing(scale=self.conf.erasing_scale, p=self.conf.erasing_p),
-                v2.Resize(size=(conf.train_size, conf.train_size), interpolation=3),
             ]
-        else:
-            augs += [v2.Resize(size=(conf.val_size, conf.val_size), interpolation=3)]
 
         augs += [
-            v2.Normalize(mean=self.mean.tolist(), std=self.std.tolist()),
+            K.Resize(size=(conf.val_size, conf.val_size)),
+            K.Normalize(mean=self.norm_stats.mean.tolist(), std=self.norm_stats.std.tolist()),
         ]
-        self.transforms = K.AugmentationSequential(*augs, data_keys=["image"])
+        self.transforms = K.AugmentationSequential(*augs, data_keys=None)
 
     def denormalize(self, x: torch.Tensor) -> torch.Tensor:
-        return K.Denormalize(mean=self.mean.tolist(), std=self.std.tolist())(x)
+        return K.Denormalize(mean=self.norm_stats.mean.tolist(), std=self.norm_stats.std.tolist())(
+            x
+        )
 
     def __len__(self) -> int:
         if self.conf.debug:
@@ -272,12 +311,17 @@ class EstuaryDataset(Dataset):
             raise FileNotFoundError(tif_path)
 
         data, _ = load_tif(tif_path, self.conf)
-
         pixels = torch.from_numpy(data.astype(np.float32))
-        pixels = self.transforms(pixels)
-
+        # Resize can create negative values :(
+        pixels = self.resize_aug(pixels).clip(0, self.norm_stats.max_pixel_value)
+        # Some Kornia per-sample augs (e.g., RandomResizedCrop) can return (1,C,H,W) for a 3D input.
+        # Squeeze a possible leading singleton batch dim so DataLoader collates to (B,C,H,W) and
+        # not (B,1,C,H,W).
+        if pixels.ndim == 4 and pixels.shape[0] == 1:
+            pixels = pixels.squeeze(0)
         label = torch.tensor(row["label_idx"], dtype=torch.long)
-        return {"image": pixels, "label": label, "source_tif": tif_path}
+
+        return {"image": pixels, "label": label, "source_tif": str(tif_path)}
 
 
 # -------------------------------------------------
@@ -300,6 +344,10 @@ class EstuaryDataModule(LightningDataModule):
         self.val_ds: Dataset | None = None
         self.test_ds: Dataset | None = None
 
+        self.train_aug: K.AugmentationSequential | None = None
+        self.val_aug: K.AugmentationSequential | None = None
+        self.test_aug: K.AugmentationSequential | None = None
+
     # -------- Lightning hooks --------
     def prepare_data(self) -> None:
         # verify files exist & readable
@@ -318,16 +366,19 @@ class EstuaryDataModule(LightningDataModule):
                 conf=self.conf,
                 train=True,
             )
+            self.train_aug = self.train_ds.transforms
             self.val_ds = EstuaryDataset(
                 df=df_val,
                 conf=self.conf,
                 train=False,
             )
+            self.val_aug = self.val_ds.transforms
             self.test_ds = EstuaryDataset(
                 df=df_test,
                 conf=self.conf,
                 train=False,
             )
+            self.test_aug = self.test_ds.transforms
 
     # -------- DataLoaders --------
     def train_dataloader(self):
@@ -339,6 +390,7 @@ class EstuaryDataModule(LightningDataModule):
             num_workers=num_workers(self.conf),
             pin_memory=self.conf.pin_memory,
             persistent_workers=self.conf.persistent_workers,
+            prefetch_factor=self.conf.prefetch_factor if self.conf.prefetch_factor else None,
         )
 
     def val_dataloader(self):
@@ -362,3 +414,60 @@ class EstuaryDataModule(LightningDataModule):
             pin_memory=self.conf.pin_memory,
             persistent_workers=self.conf.persistent_workers,
         )
+
+    """
+    These two functions are a hack to run augmentation on CPU when the device is apple MPS
+    and on GPU otherwise.
+    """
+
+    def _aug_batch(
+        self, batch: dict[str, torch.Tensor], dataloader_idx: int
+    ) -> dict[str, torch.Tensor]:
+        if self.trainer:
+            if self.trainer.training:
+                aug = self.train_aug
+            elif self.trainer.validating or self.trainer.sanity_checking:
+                aug = self.val_aug
+            elif self.trainer.testing:
+                aug = self.test_aug
+            elif self.trainer.predicting:
+                aug = self.test_aug
+            else:
+                aug = self.test_aug
+
+            assert aug is not None
+            batch = aug(batch)
+        return batch
+
+    def on_before_batch_transfer(
+        self, batch: dict[str, torch.Tensor], dataloader_idx: int
+    ) -> dict[str, torch.Tensor]:
+        """Apply batch augmentations to the batch BEFORE it is transferred to the device.
+
+        Args:
+            batch: A batch of data that needs to be altered or augmented.
+            device: The device
+            dataloader_idx: The index of the dataloader to which the batch belongs.
+
+        Returns:
+            A batch of data.
+        """
+        if self.trainer and torch.backends.mps.is_available():
+            batch = self._aug_batch(batch, dataloader_idx)
+        return batch
+
+    def on_after_batch_transfer(
+        self, batch: dict[str, torch.Tensor], dataloader_idx: int
+    ) -> dict[str, torch.Tensor]:
+        """Apply batch augmentations to the batch AFTER it is transferred to the device.
+
+        Args:
+            batch: A batch of data that needs to be altered or augmented.
+            dataloader_idx: The index of the dataloader to which the batch belongs.
+
+        Returns:
+            A batch of data.
+        """
+        if self.trainer and not torch.backends.mps.is_available():
+            batch = self._aug_batch(batch, dataloader_idx)
+        return batch

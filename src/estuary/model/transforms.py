@@ -161,3 +161,43 @@ class ScaleNormalization(IntensityAugmentationBase2D):
         transform: Tensor | None = None,
     ) -> Tensor:
         return input / flags["max_val"]
+
+
+def contrast_stretch_torch(
+    imgs: torch.Tensor, p_low: float = 2.0, p_high: float = 98.0
+) -> torch.Tensor:
+    """
+    Perform contrast stretching on a batched torch tensor.
+
+    Args:
+        imgs: Tensor of shape (B, C, H, W) or (C, H, W).
+        p_low: Low percentile (0-100).
+        p_high: High percentile (0-100).
+
+    Returns:
+        Tensor with values stretched to [0, 1].
+    """
+    added_batch = False
+    if imgs.ndim == 3:  # (C,H,W)
+        imgs = imgs.unsqueeze(0)  # (1,C,H,W)
+        added_batch = True
+
+    B, C, H, W = imgs.shape
+    flat = imgs.view(B, C, -1)
+
+    # Mask out very small values
+    threshold = 1e-6
+    flat_masked = flat.clone()
+    flat_masked[flat_masked < threshold] = float("nan")
+
+    # Compute percentiles ignoring NaNs
+    v_min = torch.nanquantile(flat_masked, q=p_low / 100.0, dim=-1, keepdim=True)
+    v_max = torch.nanquantile(flat_masked, q=p_high / 100.0, dim=-1, keepdim=True)
+
+    stretched = (flat - v_min) / (v_max - v_min + 1e-8)
+    stretched = stretched.clamp(0.0, 1.0).view(B, C, H, W)
+
+    if added_batch:
+        stretched = stretched.squeeze(0)
+
+    return stretched

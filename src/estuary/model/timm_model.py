@@ -2,12 +2,14 @@ import timm
 import torch
 import torch.nn as nn
 
-from estuary.model.config import EstuaryConfig
+from estuary.model.config import EstuaryConfig, ModelType
 
 
 class TimmModel(nn.Module):
-    def __init__(self, conf: EstuaryConfig) -> None:
-        assert conf.model_type == "timm"
+    def __init__(self, conf: EstuaryConfig, num_classes: int) -> None:
+        super().__init__()
+
+        assert conf.model_type == ModelType.TIMM
         in_chans = conf.bands.num_channels()
 
         if conf.pretrained:
@@ -17,9 +19,10 @@ class TimmModel(nn.Module):
             conf.model_name,
             pretrained=conf.pretrained,
             in_chans=in_chans,
-            num_classes=len(conf.classes),
+            num_classes=num_classes,
             drop_rate=conf.dropout,
+            drop_path_rate=conf.drop_path,
         )
 
-    def forward(self, data: torch.Tensor) -> torch.Tensor:
-        return self.model.forward(data)
+    def forward(self, data: dict[str, torch.Tensor]) -> torch.Tensor:
+        return self.model.forward(data["image"])
