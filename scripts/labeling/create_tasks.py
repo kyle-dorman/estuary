@@ -8,11 +8,11 @@ from pathlib import Path
 
 import click
 import numpy as np
-import pandas as pd
 import tqdm
 from label_studio_sdk import LabelStudio
 from PIL import Image
 
+from estuary.model.data import parse_dt_from_pth
 from estuary.util import tif_to_rgb
 
 """
@@ -63,6 +63,9 @@ def regions_tifs(base_dir: Path) -> dict[str, list[Path]]:
         # e.g. base/2024/06/my_region/files/scene_SR_clip.tif --> "my_region"
         region = tif.parents[1].name
         regions.setdefault(region, []).append(tif)
+
+    for k in regions.keys():
+        regions[k] = sorted(regions[k], key=lambda p: parse_dt_from_pth(p))
 
     keys = sorted(list(regions.keys()))
     return {k: regions[k] for k in keys}
@@ -148,9 +151,11 @@ def main(
     """Create a new Label Studio project and populate it with classification tasks."""
     base_path = Path(base_dir)
     labeling_base_path = Path(labeling_base_dir)
+    labeling_base_path.mkdir(exist_ok=True, parents=True)
 
     click.echo(f"Scanning regions under {base_path} …")
     region_items = regions_tifs(base_path)
+    region_items = {k: v for k, v in region_items.items() if k == "2145"}
     if not region_items:
         click.echo("No regions found!", err=True)
         sys.exit(1)
@@ -163,8 +168,8 @@ def main(
         if pdir.is_dir():
             with open(pdir / "tasks.json") as f:
                 completed.append(json.load(f)[0]["meta"]["region"])
-    skipped_df = pd.read_csv(labeling_base_path.parent.parent / "geos" / "skipped_regions.csv")
-    skipped = list(map(str, skipped_df["Site code"].to_list()))
+    # skipped_df = pd.read_csv(labeling_base_path.parent.parent / "geos" / "skipped_regions.csv")
+    skipped = []  # list(map(str, skipped_df["Site code"].to_list()))
 
     norun = skipped + completed
     dorun = set(region_items.keys()) - set(norun)
@@ -179,7 +184,7 @@ def main(
         if "skysat" in str(paths[0]):
             name = "SS"
         else:
-            name = "Dove"
+            name = "Dove All"
 
         project_title = f"{name} - {region}"
         project = client.projects.create(title=project_title, label_config=build_label_config())

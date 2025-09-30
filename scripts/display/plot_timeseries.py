@@ -20,9 +20,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 import tqdm
-from matplotlib.dates import ConciseDateFormatter, MonthLocator
+from matplotlib.dates import ConciseDateFormatter, MonthLocator, YearLocator
 
-from estuary.clay.data import parse_dt_from_pth
+from estuary.model.data import parse_dt_from_pth
 
 USGS_MAP = {
     "russian_river": "11467270",
@@ -83,9 +83,8 @@ def add_acquired(df):
 
 def make_plot(
     df: pd.DataFrame,
-    labels_df: pd.DataFrame,
-    high_res_df: pd.DataFrame,
-    region: str,
+    high_res_df: pd.DataFrame | None,
+    region: int,
     out_path: Path,
     class0: str,
     class1: str,
@@ -99,10 +98,6 @@ def make_plot(
     if g.empty:
         return
 
-    # Ensure proper types
-    g["acquired"] = pd.to_datetime(g["acquired"], errors="coerce")
-    g = g.dropna(subset=["acquired"]).sort_values("acquired")
-
     # Index by time
     g = g.set_index("acquired")
 
@@ -114,7 +109,7 @@ def make_plot(
 
     # Colors (1=open -> green, 0=closed -> red)
     cmap = {1: ("#2ca02c", class0), 0: ("#d62728", class1)}
-    colors = [cmap[int(v)][0] for v in g["pred"].tolist()]
+    colors = [cmap[int(v)][0] for v in g["y_pred"].tolist()]
 
     # Build figure with two rows: predictions (top) and labels (bottom)
     nrows = 1 if skip_labels else 2
@@ -136,7 +131,7 @@ def make_plot(
     # Scatter of predicted states at y={0,1}
     ax.scatter(
         g.index,
-        g["pred"].to_numpy(),
+        g["y_pred"].to_numpy(),
         c=colors,
         s=10,
         alpha=0.9,
@@ -146,8 +141,8 @@ def make_plot(
     )
 
     # Confidence as a smoothed line on a twin y-axis (0..1)
-    if "conf" in g.columns:
-        conf = 1 - pd.to_numeric(g["conf"], errors="coerce").clip(0, 1)
+    if "y_prob" in g.columns:
+        conf = 1 - pd.to_numeric(g["y_prob"], errors="coerce").clip(0, 1)
         conf_smooth = conf.rolling(f"{conf_smooth_days}D", min_periods=1, center=True).mean()
         ax2 = ax.twinx()
         ax2.plot(
@@ -160,7 +155,7 @@ def make_plot(
         )
         ax2.set_ylim(0.0, 1.0)
         ax2.set_yticks([0.0, 0.5, 1.0])
-        ax2.set_ylabel("confidence", fontsize=8)
+        ax2.set_ylabel("y_prob", fontsize=8)
         ax2.grid(False)
 
     # Formatting for predictions axis
@@ -173,53 +168,45 @@ def make_plot(
     if not skip_labels:
         ax_lab = axes[1]
         # Labels subplot
-        lab = labels_df[labels_df["region"] == region].copy()
-        if not lab.empty:
-            lab["acquired"] = pd.to_datetime(lab["acquired"], errors="coerce")
-            lab = lab.dropna(subset=["acquired"]).sort_values("acquired").set_index("acquired")
-            if start_dt is not None or end_dt is not None:
-                lab = lab.loc[start_dt:end_dt]
-            if not lab.empty:
-                colors_lab = [cmap[int(v)][0] for v in lab["label_idx"].tolist()]
-                ax_lab.scatter(
-                    lab.index,
-                    lab["label_idx"].to_numpy(),
-                    c=colors_lab,
-                    s=10,
-                    alpha=0.9,
-                    edgecolors="k",
-                    linewidths=0.1,
-                    zorder=2,
-                )
-        # Overlay markers for dates where we have high-resolution example images
-        hi = high_res_df[high_res_df["region"] == region].copy()
-        if not hi.empty:
-            hi["acquired"] = pd.to_datetime(hi["acquired"], errors="coerce")
-            hi = hi.dropna(subset=["acquired"]).sort_values("acquired").set_index("acquired")
-            if start_dt is not None or end_dt is not None:
-                hi = hi.loc[start_dt:end_dt]
+        colors_lab = [cmap[int(v)][0] for v in g.y_true.tolist()]
+        ax_lab.scatter(
+            g.index,
+            g.y_true.to_numpy(),
+            c=colors_lab,
+            s=10,
+            alpha=0.9,
+            edgecolors="k",
+            linewidths=0.1,
+            zorder=2,
+        )
+        if high_res_df is not None:
+            # Overlay markers for dates where we have high-resolution example images
+            hi = high_res_df[high_res_df["region"] == region].copy().set_index("acquired")
             if not hi.empty:
-                # Light vertical lines and a small marker below the 0/1 band
-                ax_lab.vlines(
-                    hi.index,
-                    ymin=-0.2,
-                    ymax=1.2,
-                    colors="#4c78a8",
-                    alpha=0.4,
-                    linewidth=1.0,
-                    zorder=1,
-                )
-                ax_lab.scatter(
-                    hi.index,
-                    [-0.15] * len(hi),
-                    s=18,
-                    color="#4c78a8",
-                    alpha=0.9,
-                    marker="v",
-                    edgecolors="white",
-                    linewidths=0.5,
-                    zorder=3,
-                )
+                if start_dt is not None or end_dt is not None:
+                    hi = hi.loc[start_dt:end_dt]
+                if not hi.empty:
+                    # Light vertical lines and a small marker below the 0/1 band
+                    ax_lab.vlines(
+                        hi.index,
+                        ymin=-0.2,
+                        ymax=1.2,
+                        colors="#4c78a8",
+                        alpha=0.4,
+                        linewidth=1.0,
+                        zorder=1,
+                    )
+                    ax_lab.scatter(
+                        hi.index,
+                        [-0.15] * len(hi),
+                        s=18,
+                        color="#4c78a8",
+                        alpha=0.9,
+                        marker="v",
+                        edgecolors="white",
+                        linewidths=0.5,
+                        zorder=3,
+                    )
 
         # Overlay USGS gage height (00065) if this region maps to a USGS site
         site_no = USGS_MAP.get(region)
@@ -255,7 +242,7 @@ def make_plot(
         ax.tick_params(labelbottom=False)
 
     # Quarterly month ticks (Jan, Apr, Jul, Oct) on bottom axis for seasonal sense
-    q_locator = MonthLocator()
+    q_locator = YearLocator()
     label_axis.xaxis.set_major_locator(q_locator)
     label_axis.xaxis.set_major_formatter(ConciseDateFormatter(q_locator))
     label_axis.xaxis.set_minor_locator(MonthLocator())
@@ -276,15 +263,9 @@ def main() -> None:
         help="Path to preds.csv with acquired, region, pred, conf",
     )
     ap.add_argument(
-        "--labels",
-        type=Path,
-        required=True,
-        help="Path to labels.csv with acquired, region, label",
-    )
-    ap.add_argument(
         "--high-res",
         type=Path,
-        required=True,
+        required=False,
         help="Path to directory of high res images",
     )
     ap.add_argument(
@@ -301,37 +282,30 @@ def main() -> None:
         default=10,
         help="Rolling window (days) for confidence smoothing",
     )
-    ap.add_argument("--region", type=str, default=None, help="If set, only plot this region")
+    ap.add_argument("--region", type=int, default=None, help="If set, only plot this region")
     ap.add_argument("--skip-labels", action="store_true", help="If set, skip plotting labels")
     args = ap.parse_args()
 
     out_dir: Path = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    labels_df = pd.read_csv(args.labels)
-    labels_df["label_idx"] = labels_df.label.apply(lambda a: int(a == "open"))
-    labels_df = labels_df[labels_df.label.isin(["open", "closed"])].copy(deep=True).reset_index()
-
     df = pd.read_csv(args.preds)
-    thresholds = pd.read_csv(Path(args.preds).parent / "thresholds.csv")
-    for _, row in thresholds.iterrows():
-        k = df.region == row.region
-        df.loc[k, "pred"] = 1 - (df[k].conf >= row.best_threshold).astype(int)
     df = add_acquired(df)
-    labels_df = add_acquired(labels_df)
 
     high_res = []
-    for pth in Path(args.high_res).glob("*/*/files/*_pansharpened_clip.tif"):
-        yearmonthday = pth.stem.split("_")[0]
-        dt = pd.to_datetime(yearmonthday, format="%Y%m%d")
-        high_res.append([pth, pth.parent.parent.name, dt])
-    high_res_df = pd.DataFrame(high_res, columns=["path", "region", "acquired"])
+    high_res_df = None
+    if args.high_res is not None:
+        for pth in Path(args.high_res).glob("*/*/files/*_pansharpened_clip.tif"):
+            yearmonthday = pth.stem.split("_")[0]
+            dt = pd.to_datetime(yearmonthday, format="%Y%m%d")
+            high_res.append([pth, pth.parent.parent.name, dt])
+        high_res_df = pd.DataFrame(high_res, columns=["path", "region", "acquired"])
 
     start_dt = pd.to_datetime(args.start) if args.start else None
     end_dt = pd.to_datetime(args.end) if args.end else None
 
     # Iterate regions and save one PNG each
-    regions = df["region"].dropna().unique().tolist()
+    regions = list(map(int, df["region"].dropna().unique().tolist()))
     if args.region:
         if args.region in regions:
             regions = [args.region]
@@ -342,7 +316,6 @@ def main() -> None:
         fname = out_dir / f"{region}_state_timeseries.png"
         make_plot(
             df,
-            labels_df,
             high_res_df,
             region,
             fname,

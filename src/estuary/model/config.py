@@ -110,8 +110,10 @@ class EstuaryConfig:
     decoder_heads: int = 2
     decoder_dim_head: int = 48
     decoder_mlp_ratio: int = 2
+    global_pool: str = "avg"
+    lse_beta: float = 10.0
     dropout: float = 0.1
-    drop_path: float = 0.1
+    drop_path: float = 0.05
     train_size: int = 256
     val_size: int = 256
     world_size: int = 1
@@ -126,34 +128,36 @@ class EstuaryConfig:
     metadata_path: Path = Path("/Users/kyledorman/data/models/clay/metadata.yaml")
     # /Volumes/x10pro/estuary/dataset/normalization/stats.json
     normalization_path: Path | None = None
-    contrast: float = 0.15
+    contrast: float = 0.05
     contrast_p: float = 1.0
-    brightness: float = 0.15
+    brightness: float = 0.05
     brightness_p: float = 1.0
     scale: tuple[float, float] = (0.9, 1.0)
-    sharpness: float = 2.0
+    sharpness: float = 1.0
     sharpness_p: float = 0.1
     erasing_scale: tuple[float, float] = (0.02, 0.05)
     erasing_p: float = 0.1
     gauss_mean: float = 0.0
-    gauss_std: float = 0.01
+    gauss_std: float = 0.005
     gauss_p: float = 0.1
     blur_kernel_size: int = 7
     blur_sigma: tuple[float, float] = (0.0, 1.0)
     blur_p: float = 0.1
-    channel_shift_limit: float = 0.2
+    channel_shift_limit: float = 0.05
     channel_shift_p: float = 0.1
 
     lr: float = 1e-4
     base_lr_batch_size: int = 128
     warmup_epochs: int = 2
-    init_lr: float = 1e-5
-    min_lr: float = 1e-6
+    flat_epochs: int = 0
+    init_lr_scale: float = 1e-1
+    min_lr_scale: float = 1e-1
+    backbone_lr_scale: float | None = None
     patience: int = 5
     optimizer: str = "adamw"
-    weight_decay: float = 1e-5
+    weight_decay: float = 3e-4
     scheduler: str = "cosine"
-    gamma: float = 0.9
+
     gradient_clip_val: float = 1.0
     gradient_clip_algorithm: str | None = "norm"
     loss_fn: str = "ce"

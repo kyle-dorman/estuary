@@ -341,17 +341,15 @@ class EstuaryModule(LightningModule):
         # --------------------------------------------------------------
         global_batch_size = self.conf.batch_size * self.conf.world_size * self.conf.grad_accum_steps
         batch_ratio = (global_batch_size / self.conf.base_lr_batch_size) ** 0.5
+
         lr = self.conf.lr * batch_ratio
-        init_lr = self.conf.init_lr * batch_ratio
-        min_lr = self.conf.min_lr * batch_ratio
-        warmup_epochs = self.conf.warmup_epochs
-        if self.conf.epochs - warmup_epochs <= 0:
-            warmup_epochs = 0
+        backbone_lr = (
+            self.conf.backbone_lr_scale * lr if self.conf.backbone_lr_scale is not None else None
+        )
 
         # --------------------------------------------------------------
         # Parameter groups: apply weight‑decay only where it matters
         # --------------------------------------------------------------
-        decay, no_decay = [], []
         norm_modules = (
             nn.BatchNorm1d,
             nn.BatchNorm2d,
@@ -364,27 +362,72 @@ class EstuaryModule(LightningModule):
             nn.InstanceNorm3d,
         )
 
-        for module in self.model.modules():
+        # Helper: is this a normalization/bias param?
+        def is_norm_or_bias(module, name):
+            return name.endswith("bias") or isinstance(module, norm_modules)
+
+        backbone_decay, backbone_no_decay, head_decay, head_no_decay = [], [], [], []
+        # Traverse all named parameters with their modules
+        for module_name, module in self.model.named_modules():
             for name, param in module.named_parameters(recurse=False):
                 if not param.requires_grad:
                     continue
-                # biases OR parameters in a normalisation layer ⇒ no weight‑decay
-                if name.endswith("bias") or isinstance(module, norm_modules):
-                    no_decay.append(param)
+                param_full_name = f"{module_name}.{name}" if module_name else name
+                is_head = ("head" in param_full_name) or ("classifier" in param_full_name)
+                if is_norm_or_bias(module, name):
+                    if is_head:
+                        head_no_decay.append(param)
+                    else:
+                        backbone_no_decay.append(param)
                 else:
-                    decay.append(param)
+                    if is_head:
+                        head_decay.append(param)
+                    else:
+                        backbone_decay.append(param)
 
-        param_groups = [
-            {"params": decay, "weight_decay": self.conf.weight_decay},
-            {"params": no_decay, "weight_decay": 0.0},
-        ]
+        # Build param groups: backbone and head, each with decay/no_decay, each with their own LR
+        param_groups = []
+        # backbone group
+        if backbone_decay or backbone_no_decay:
+            param_groups.append(
+                {
+                    "params": backbone_decay,
+                    "weight_decay": self.conf.weight_decay,
+                    "lr": backbone_lr if backbone_lr is not None else lr,
+                }
+            )
+            param_groups.append(
+                {
+                    "params": backbone_no_decay,
+                    "weight_decay": 0.0,
+                    "lr": backbone_lr if backbone_lr is not None else lr,
+                }
+            )
+        # head group
+        if head_decay or head_no_decay:
+            param_groups.append(
+                {
+                    "params": head_decay,
+                    "weight_decay": self.conf.weight_decay,
+                    "lr": lr,
+                }
+            )
+            param_groups.append(
+                {
+                    "params": head_no_decay,
+                    "weight_decay": 0.0,
+                    "lr": lr,
+                }
+            )
+
+        # Remove empty param groups
+        param_groups = [g for g in param_groups if g["params"]]
 
         # --------------------------------------------------------------
         # Optimiser
         # --------------------------------------------------------------
         if self.conf.optimizer == "adamw":
-            optimizer = optim.AdamW(param_groups, lr=lr)
-            return optimizer
+            optimizer = optim.AdamW(param_groups)
         else:
             raise RuntimeError(f"Unexpected optimizer {self.conf.optimizer}")
 
@@ -392,22 +435,37 @@ class EstuaryModule(LightningModule):
         # Scheduler: Linear warm‑up  ➜  Cosine annealing
         # --------------------------------------------------------------
         schedulers, milestones = [], []
+        warmup_epochs = self.conf.warmup_epochs
+        if self.conf.epochs - warmup_epochs <= 0:
+            warmup_epochs = 0
         if warmup_epochs:
             warmup = torch.optim.lr_scheduler.LinearLR(
                 optimizer,
-                start_factor=init_lr / lr,
+                start_factor=self.conf.init_lr_scale,
                 total_iters=warmup_epochs,
             )
             schedulers.append(warmup)
             milestones.append(warmup_epochs)
 
+        cosine_epochs = self.conf.epochs - warmup_epochs - self.conf.flat_epochs
+        assert cosine_epochs > 0
         cosine = CosineAnnealingLR(
             optimizer,
-            T_max=self.conf.epochs - warmup_epochs if warmup_epochs else self.conf.epochs,
-            eta_min=min_lr,
+            T_max=cosine_epochs,
+            eta_min=lr * self.conf.min_lr_scale,
         )
         schedulers.append(cosine)
 
-        scheduler = SequentialLR(optimizer, schedulers=schedulers, milestones=milestones)
+        if self.conf.flat_epochs > 0:
+            flat = torch.optim.lr_scheduler.ConstantLR(
+                optimizer, factor=self.conf.min_lr_scale, total_iters=self.conf.flat_epochs
+            )
+            schedulers.append(flat)
+            milestones.append(warmup_epochs + cosine_epochs)
+
+        if len(schedulers) > 1:
+            scheduler = SequentialLR(optimizer, schedulers=schedulers, milestones=milestones)
+        else:
+            scheduler = schedulers[0]
 
         return [optimizer], [scheduler]

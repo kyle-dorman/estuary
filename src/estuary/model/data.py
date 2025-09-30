@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -47,18 +48,24 @@ def cpu_count() -> int:
 
 
 def load_labels(conf: EstuaryConfig) -> pd.DataFrame:
-    df = pd.read_csv(conf.data)
+    return _load_labels(conf.classes, _load_labels.data)
 
-    if "perched open" not in conf.classes:
+
+def _load_labels(classes: Iterable[str], data_path: Path) -> pd.DataFrame:
+    df = pd.read_csv(data_path)
+
+    df["orig_label"] = df.label
+
+    if "perched open" not in classes:
         df.loc[df.label == "perched open", "label"] = "open"
 
-    cls_diff = set(df.label.unique()) - set(conf.classes)
+    cls_diff = set(df.label.unique()) - set(classes)
     if cls_diff:
         logger.warning(f"Some label classes will be ignored {cls_diff}")
-    df = df[df.label.isin(conf.classes)].copy()
+    df = df[df.label.isin(classes)].copy()
 
     # build a lookup dict → index
-    lookup = {tok: idx for idx, tok in enumerate(conf.classes)}
+    lookup = {tok: idx for idx, tok in enumerate(classes)}
     # map to indices (will never produce NaN, because we pre-checked)
     df["label_idx"] = df["label"].map(lookup)
 
@@ -106,6 +113,8 @@ def create_splits(
         logger.info(df_train["label_idx"].value_counts())
         logger.info("Val Class Split")
         logger.info(df_val["label_idx"].value_counts())
+        logger.info("Test Class Split")
+        logger.info(df_test["label_idx"].value_counts())
     return df_train, df_val, df_test
 
 

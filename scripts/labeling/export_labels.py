@@ -15,7 +15,7 @@ import pandas as pd
 from label_studio_sdk.client import LabelStudio
 from tqdm import tqdm
 
-from estuary.clay.data import parse_dt_from_pth
+from estuary.model.data import parse_dt_from_pth
 
 
 def extract_label(task: dict) -> str | None:
@@ -36,7 +36,9 @@ def extract_label(task: dict) -> str | None:
     type=click.Path(path_type=Path),
     help="Directory with label studio projects.",
 )
-@click.option("--out", required=True, type=click.Path(writable=True), help="Output .csv file.")
+@click.option(
+    "--out", required=True, type=click.Path(writable=True, path_type=Path), help="Output .csv file."
+)
 @click.option(
     "--ls-url",
     default="http://localhost:8080",
@@ -76,7 +78,6 @@ def main(labeling_dir: Path, out: Path, ls_url: str):
                 {
                     "region": region,
                     "source_tif": source_tif,
-                    "source_jpeg": source_jpeg,
                     "label": label,
                     "acquired": acquired,
                     "instrument": "skysat" if "skysat" in str(source_tif) else "dove",
@@ -89,7 +90,8 @@ def main(labeling_dir: Path, out: Path, ls_url: str):
 
     df = pd.DataFrame(rows)
     df["acquired"] = pd.to_datetime(df["acquired"], errors="coerce")
-    os.remove(out)
+    if out.exists():
+        os.remove(out)
     df.to_csv(out, index=False)
     click.echo(f"Exported {len(df)} labels to {out}")
 

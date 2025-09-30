@@ -88,7 +88,7 @@ def normalized_image_3_channel(
     img = masked_contrast_stretch(img, ~nodata, p_low=1, p_high=99)
 
     for i in range(3):
-        img[:, :, i][nodata] = 0
+        img[i][nodata] = 0
 
     return img
 
