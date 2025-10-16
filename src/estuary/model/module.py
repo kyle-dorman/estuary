@@ -228,6 +228,18 @@ class EstuaryModule(LightningModule):
             # logits: [B, 1]; targets: int {0,1}
             logits = logits.view(-1)
             target_f = target.float()
+
+            if self.conf.perch_smooth_factor > 1e-4:
+                # If no smooth_factor, will just use 0.
+                label_str = batch["orig_label"]
+                is_hard = torch.tensor(
+                    [a == "perched open" for a in label_str], dtype=torch.bool, device=target.device
+                )
+                eps = torch.where(is_hard, self.conf.perch_smooth_factor, self.conf.smooth_factor)
+                target_f = target_f * (1 - eps) + eps * 0.5
+            elif self.conf.smooth_factor > 1e-4:
+                target_f = target_f * (1 - self.conf.smooth_factor) + 0.5 * self.conf.smooth_factor
+
             loss = self.loss_fn(logits, target_f)
             probs_pos = torch.sigmoid(logits)
 
@@ -447,14 +459,17 @@ class EstuaryModule(LightningModule):
             schedulers.append(warmup)
             milestones.append(warmup_epochs)
 
-        cosine_epochs = self.conf.epochs - warmup_epochs - self.conf.flat_epochs
-        assert cosine_epochs > 0
-        cosine = CosineAnnealingLR(
-            optimizer,
-            T_max=cosine_epochs,
-            eta_min=lr * self.conf.min_lr_scale,
-        )
-        schedulers.append(cosine)
+        if self.conf.scheduler == "cosine":
+            cosine_epochs = self.conf.epochs - warmup_epochs - self.conf.flat_epochs
+            assert cosine_epochs > 0
+            cosine = CosineAnnealingLR(
+                optimizer,
+                T_max=cosine_epochs,
+                eta_min=lr * self.conf.min_lr_scale,
+            )
+            schedulers.append(cosine)
+        else:
+            raise RuntimeError(f"Unsuported scheduler {self.conf.scheduler}")
 
         if self.conf.flat_epochs > 0:
             flat = torch.optim.lr_scheduler.ConstantLR(

@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import rasterio
 from numpy.ma.core import MaskedArray
+from PIL import Image, ImageDraw, ImageFont
 
 local_logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ def false_color(data: np.ndarray, nodata: np.ndarray):
 def tif_to_rgb(pth: Path) -> np.ndarray:
     with rasterio.open(pth) as src:
         data = src.read(out_dtype=np.float32)
-        nodata = src.read(1, masked=True).mask
+        nodata = ~src.read_masks(1)
         if nodata.all():
             return np.zeros((*nodata.shape, 3), dtype=np.uint8)
 
@@ -146,3 +147,57 @@ def setup_logger(save_dir: Path | None = None, log_filename: str = "log.log"):
 
     # Add handlers to the logger
     root_logger.addHandler(console_handler)
+
+
+def draw_border(img: Image.Image, color: tuple[int, int, int]) -> Image.Image:
+    """Draw a colored border."""
+    draw = ImageDraw.Draw(img, "RGBA")
+    w, h = img.size
+
+    # Border matching class color
+    draw.rectangle([0, 0, w - 1, h - 1], outline=color + (255,), width=4)
+
+    return img
+
+
+def draw_label(
+    img: Image.Image, text: str, color: tuple[int, int, int], add_border=True
+) -> Image.Image:
+    """Draw a semi-transparent banner with outlined text, and optional colored border."""
+    # Optional: try a nicer font; fall back to default if not available
+    try:
+        FONT = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 20)
+    except Exception:
+        FONT = ImageFont.load_default()
+
+    draw = ImageDraw.Draw(img, "RGBA")
+    w, h = img.size
+
+    # Banner box
+    pad_x, pad_y = 10, 8
+    text_w, text_h = draw.textbbox((0, 0), text, font=FONT)[2:]
+    box_w = min(w - 2 * pad_x, text_w + 2 * pad_x)
+    box_h = text_h + 2 * pad_y
+
+    # Top-left anchor for banner
+    x0, y0 = pad_x, pad_y
+    x1, y1 = x0 + box_w, y0 + box_h
+
+    # Semi-transparent dark banner
+    draw.rounded_rectangle([x0, y0, x1, y1], radius=10, fill=(0, 0, 0, 110))
+
+    # Outlined text (stroke) for readability
+    draw.text(
+        (x0 + pad_x, y0 + pad_y),
+        text,
+        font=FONT,
+        fill=(255, 255, 255, 255),
+        stroke_width=2,
+        stroke_fill=(0, 0, 0, 220),
+    )
+
+    # Optional border matching class color
+    if add_border:
+        draw.rectangle([0, 0, w - 1, h - 1], outline=color + (255,), width=4)
+
+    return img

@@ -16,6 +16,7 @@ import torch
 from kornia.constants import Resample
 from lightning.pytorch import LightningDataModule
 from pyproj import Transformer
+from sklearn.model_selection import StratifiedGroupKFold
 from torch.utils.data import DataLoader, Dataset
 
 from estuary.model.config import (
@@ -48,7 +49,7 @@ def cpu_count() -> int:
 
 
 def load_labels(conf: EstuaryConfig) -> pd.DataFrame:
-    return _load_labels(conf.classes, _load_labels.data)
+    return _load_labels(conf.classes, conf.data)
 
 
 def _load_labels(classes: Iterable[str], data_path: Path) -> pd.DataFrame:
@@ -90,31 +91,69 @@ def _load_labels(classes: Iterable[str], data_path: Path) -> pd.DataFrame:
 def create_splits(
     conf: EstuaryConfig, verbose: bool = True
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Create train/val/test splits.
+    """Create train/val/test splits. Method from EstuaryConfig.split_method
 
     Supported strategies:
-      - "year": hold out one year for test and one for validation (manual),
-                 optional union with a full region holdout for test.
-      - "random": legacy stratified random split (fallback).
+      - "region": Read val/test holdout regions names from EstuaryConfig.region_splits
+      - "crossval": Run a cross validation. Get index from EstuaryConfig.cv_index
+            and num cross validations from EstuaryConfig.cv_folds
+      - "yearly": Split by calendar year using EstuaryConfig.val_year and EstuaryConfig.test_year
     """
     df = load_labels(conf)
-    region_splits = pd.read_csv(conf.region_splits, index_col="region")
 
-    df_train = df[df.region.isin(region_splits[region_splits.is_train].index)]
-    df_val = df[df.region.isin(region_splits[region_splits.is_val].index)]
-    df_test = df[df.region.isin(region_splits[region_splits.is_test].index)]
+    logger.info(f"Splitting dataset using {conf.split_method}")
+
+    if conf.split_method == "crossval":
+        assert conf.cv_index < conf.cv_folds
+
+        sgkf = StratifiedGroupKFold(n_splits=conf.cv_folds, shuffle=True, random_state=conf.seed)
+        found = False
+        for i, (train_idx, val_idx) in enumerate(
+            sgkf.split(df, y=df["label_idx"], groups=df["region"])
+        ):
+            if i == conf.cv_index:
+                found = True
+                df_train = df.iloc[train_idx].copy()
+                df_val = df.iloc[val_idx].copy()
+                df_test = df_val.copy()
+                break
+        if not found:
+            raise ValueError(f"cv_index {conf.cv_index} out of range for n_splits={conf.cv_folds}")
+    elif conf.split_method == "region":
+        region_splits = pd.read_csv(conf.region_splits, index_col="region")
+
+        df_train = df[df.region.isin(region_splits[region_splits.is_train].index)].copy()
+        df_val = df[df.region.isin(region_splits[region_splits.is_val].index)].copy()
+        df_test = df[df.region.isin(region_splits[region_splits.is_test].index)].copy()
+    elif conf.split_method == "yearly":
+        # Yearly split: require val_year and test_year, and split by year column
+        df["year"] = df["acquired"].dt.year
+        if conf.val_year is None or conf.test_year is None:
+            raise ValueError("yearly split requires conf.val_year and conf.test_year")
+        df_val = df[df["year"] == conf.val_year].copy()
+        df_test = df[df["year"] == conf.test_year].copy()
+        df_train = df[~df["year"].isin([conf.val_year, conf.test_year])].copy()
+        if df_val.empty:
+            raise ValueError(f"No samples found for val_year={conf.val_year}")
+        if df_test.empty:
+            raise ValueError(f"No samples found for test_year={conf.test_year}")
+    else:
+        raise RuntimeError(f"Unexpected split_method {conf.split_method}")
 
     # Log split sizes
     logger.info(
         "Split sizes -> train: %d, val: %d, test: %d", len(df_train), len(df_val), len(df_test)
     )
+    df_train["dataset"] = "train"
+    df_val["dataset"] = "val"
+    df_test["dataset"] = "test"
     if verbose:
         logger.info("Train Class Split")
-        logger.info(df_train["label_idx"].value_counts())
+        logger.info(df_train["label_idx"].value_counts().sort_index())
         logger.info("Val Class Split")
-        logger.info(df_val["label_idx"].value_counts())
+        logger.info(df_val["label_idx"].value_counts().sort_index())
         logger.info("Test Class Split")
-        logger.info(df_test["label_idx"].value_counts())
+        logger.info(df_test["label_idx"].value_counts().sort_index())
     return df_train, df_val, df_test
 
 
@@ -158,7 +197,7 @@ def load_tif(pth: Path, config: EstuaryConfig) -> tuple[np.ndarray, tuple[float,
         lon, lat = transformer.transform(centroid_x, centroid_y)
 
         data = src.read(out_dtype=np.float32)
-        nodata = src.read(1, masked=True).mask
+        nodata = ~src.read_masks(1)
 
         if nodata.all():
             img = np.zeros((*nodata.shape, 3), dtype=np.uint8)
@@ -328,9 +367,16 @@ class EstuaryDataset(Dataset):
         # not (B,1,C,H,W).
         if pixels.ndim == 4 and pixels.shape[0] == 1:
             pixels = pixels.squeeze(0)
+
+        orig_label_str = row["orig_label"]
         label = torch.tensor(row["label_idx"], dtype=torch.long)
 
-        return {"image": pixels, "label": label, "source_tif": str(tif_path)}
+        return {
+            "image": pixels,
+            "label": label,
+            "orig_label": orig_label_str,
+            "source_tif": str(tif_path),
+        }
 
 
 # -------------------------------------------------

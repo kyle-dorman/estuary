@@ -74,11 +74,17 @@ class EstuaryConfig:
     project: str = "estuary"
     seed: int = 42
     data: Path = Path("/UPDATEME")
-    region_splits: Path = Path("/UPDATEME")
     model_training_root: Path = Path("/Users/kyledorman/data/results")
+    # How to split train/val/test. One of ["region", "crossval", "yearly"]
+    split_method: str = "region"
+    region_splits: Path = Path("/UPDATEME")
+    cv_folds: int = 0
+    cv_index: int = 0
+    val_year: int | None = None
+    test_year: int | None = None
 
     classes: tuple[str, ...] = CLASSES
-    bands: Bands = Bands.RGB
+    bands: Bands = Bands.FALSE_COLOR
     devices: tuple[str, ...] = ("auto",)
     accelerator: str = "auto"
     compile: bool = False
@@ -99,7 +105,7 @@ class EstuaryConfig:
     preview_channels: tuple[int, int, int] = (0, 1, 2)
 
     model_type: ModelType = ModelType.TIMM
-    model_name: str = "resnet18"
+    model_name: str = "convnext_tiny.dinov3_lvd1689m"
     pretrained: bool = True
     clay_encoder_weights: Path = Path("/Users/kyledorman/data/models/clay/clay-v1.5.ckpt")
     decoder_name: str = "conv"
@@ -112,46 +118,47 @@ class EstuaryConfig:
     decoder_mlp_ratio: int = 2
     global_pool: str = "avg"
     lse_beta: float = 10.0
-    dropout: float = 0.1
-    drop_path: float = 0.05
-    train_size: int = 256
-    val_size: int = 256
+    dropout: float = 0.15
+    drop_path: float = 0.1
+    train_size: int = 224
+    val_size: int = 224
     world_size: int = 1
 
-    smooth_factor: float = 0.05
+    smooth_factor: float = 0.0
+    perch_smooth_factor: float = 0.0
     monitor_metric: str = "val/f1"
     monitor_mode: str = "max"
 
     horizontal_flip_p: float = 0.5
     vertical_flip_p: float = 0.5
-    rotation_p: float = 0.5
+    rotation_p: float = 0.1
     metadata_path: Path = Path("/Users/kyledorman/data/models/clay/metadata.yaml")
     # /Volumes/x10pro/estuary/dataset/normalization/stats.json
     normalization_path: Path | None = None
     contrast: float = 0.05
-    contrast_p: float = 1.0
+    contrast_p: float = 0.1
     brightness: float = 0.05
-    brightness_p: float = 1.0
+    brightness_p: float = 0.1
     scale: tuple[float, float] = (0.9, 1.0)
     sharpness: float = 1.0
-    sharpness_p: float = 0.1
+    sharpness_p: float = 0.05
     erasing_scale: tuple[float, float] = (0.02, 0.05)
-    erasing_p: float = 0.1
+    erasing_p: float = 0.05
     gauss_mean: float = 0.0
     gauss_std: float = 0.005
-    gauss_p: float = 0.1
+    gauss_p: float = 0.05
     blur_kernel_size: int = 7
     blur_sigma: tuple[float, float] = (0.0, 1.0)
-    blur_p: float = 0.1
+    blur_p: float = 0.05
     channel_shift_limit: float = 0.05
-    channel_shift_p: float = 0.1
+    channel_shift_p: float = 0.05
 
-    lr: float = 1e-4
+    lr: float = 5e-5
     base_lr_batch_size: int = 128
     warmup_epochs: int = 2
     flat_epochs: int = 0
     init_lr_scale: float = 1e-1
-    min_lr_scale: float = 1e-1
+    min_lr_scale: float = 5e-2
     backbone_lr_scale: float | None = None
     patience: int = 5
     optimizer: str = "adamw"
@@ -165,5 +172,5 @@ class EstuaryConfig:
     focal_alpha: float = 0.25
 
     # class_weights will be computed from training set and injected
-    use_class_weights: bool = True
+    use_class_weights: bool = False
     class_weights: tuple[float, ...] | None = None

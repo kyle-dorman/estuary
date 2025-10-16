@@ -31,6 +31,7 @@ dependencies = [
     "opencv-python-headless",
     "pandas",
     "pillow",
+    "polars>=1.34.0",
     "pyproj>=3.7.1",
     "python-dotenv>=1.1.1",
     "rasterio",

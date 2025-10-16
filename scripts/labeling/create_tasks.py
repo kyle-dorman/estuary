@@ -126,16 +126,22 @@ def build_label_config() -> str:
 @click.option(
     "-d",
     "--base-dir",
-    type=click.Path(exists=True, file_okay=False, resolve_path=True),
+    type=click.Path(exists=True, file_okay=False, resolve_path=True, path_type=Path),
     required=True,
     help="Root directory with SAT/YEAR/MONTH/REGION/files/*.tif structure.",
 )
 @click.option(
     "-ld",
     "--labeling-base-dir",
-    type=click.Path(file_okay=False, resolve_path=True),
+    type=click.Path(file_okay=False, resolve_path=True, path_type=Path),
     required=True,
     help="Directory under which JPEGs + tasks.json will be stored.",
+)
+@click.option(
+    "--region",
+    type=int,
+    required=False,
+    help="Filter to a single region",
 )
 @click.option(
     "--ls-url",
@@ -144,18 +150,18 @@ def build_label_config() -> str:
     help="Base URL of local Label Studio instance.",
 )
 def main(
-    base_dir: str,
-    labeling_base_dir: str,
+    base_dir: Path,
+    labeling_base_dir: Path,
+    region: int | None,
     ls_url: str,
 ) -> None:
     """Create a new Label Studio project and populate it with classification tasks."""
-    base_path = Path(base_dir)
-    labeling_base_path = Path(labeling_base_dir)
-    labeling_base_path.mkdir(exist_ok=True, parents=True)
+    labeling_base_dir.mkdir(exist_ok=True, parents=True)
 
-    click.echo(f"Scanning regions under {base_path} …")
-    region_items = regions_tifs(base_path)
-    region_items = {k: v for k, v in region_items.items() if k == "2145"}
+    click.echo(f"Scanning regions under {base_dir} …")
+    region_items = regions_tifs(base_dir)
+    if region is not None:
+        region_items = {k: v for k, v in region_items.items() if k == str(region)}
     if not region_items:
         click.echo("No regions found!", err=True)
         sys.exit(1)
@@ -164,11 +170,11 @@ def main(
     client = LabelStudio(base_url=ls_url)
 
     completed = []
-    for pdir in labeling_base_path.iterdir():
+    for pdir in labeling_base_dir.iterdir():
         if pdir.is_dir():
             with open(pdir / "tasks.json") as f:
                 completed.append(json.load(f)[0]["meta"]["region"])
-    # skipped_df = pd.read_csv(labeling_base_path.parent.parent / "geos" / "skipped_regions.csv")
+    # skipped_df = pd.read_csv(labeling_base_dir.parent.parent / "geos" / "skipped_regions.csv")
     skipped = []  # list(map(str, skipped_df["Site code"].to_list()))
 
     norun = skipped + completed
@@ -189,7 +195,7 @@ def main(
         project_title = f"{name} - {region}"
         project = client.projects.create(title=project_title, label_config=build_label_config())
         project_id = project.id
-        out_dir = labeling_base_path / f"{project_id:05d}"
+        out_dir = labeling_base_dir / f"{project_id:05d}"
         out_dir.mkdir(exist_ok=True, parents=True)
 
         # set up local export storage so annotations land in the same folder
