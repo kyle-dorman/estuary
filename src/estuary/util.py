@@ -6,6 +6,8 @@ import rasterio
 from numpy.ma.core import MaskedArray
 from PIL import Image, ImageDraw, ImageFont
 
+from estuary.constants import FALSE_COLOR_4, FALSE_COLOR_8
+
 local_logger = logging.getLogger(__name__)
 
 
@@ -95,7 +97,8 @@ def normalized_image_3_channel(
 
 
 def false_color(data: np.ndarray, nodata: np.ndarray):
-    img = normalized_image_3_channel(data, nodata, (3, 2, 1)).transpose((1, 2, 0))
+    channels = FALSE_COLOR_4 if len(data) == 4 else FALSE_COLOR_8
+    img = normalized_image_3_channel(data, nodata, channels).transpose((1, 2, 0))
 
     k = 1.5
     img = np.tanh(k * img) / np.tanh(k)
@@ -108,13 +111,11 @@ def false_color(data: np.ndarray, nodata: np.ndarray):
 def tif_to_rgb(pth: Path) -> np.ndarray:
     with rasterio.open(pth) as src:
         data = src.read(out_dtype=np.float32)
-        nodata = ~src.read_masks(1)
+        nodata = src.read_masks(1) == 0
         if nodata.all():
             return np.zeros((*nodata.shape, 3), dtype=np.uint8)
 
-        if len(data) == 4:
-            return false_color(data, nodata)
-        return broad_band(data, nodata)
+        return false_color(data, nodata)
 
 
 def setup_logger(save_dir: Path | None = None, log_filename: str = "log.log"):

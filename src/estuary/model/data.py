@@ -197,7 +197,7 @@ def load_tif(pth: Path, config: EstuaryConfig) -> tuple[np.ndarray, tuple[float,
         lon, lat = transformer.transform(centroid_x, centroid_y)
 
         data = src.read(out_dtype=np.float32)
-        nodata = ~src.read_masks(1)
+        nodata = src.read_masks(1) == 0
 
         if nodata.all():
             img = np.zeros((*nodata.shape, 3), dtype=np.uint8)

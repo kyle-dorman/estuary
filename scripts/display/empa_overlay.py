@@ -524,7 +524,7 @@ def main(start_date=None, end_date=None):
                 pth = row.source_tif
                 with rasterio.open(pth) as src:
                     data = src.read(out_dtype=np.float32)
-                    nodata = ~src.read_masks(1)
+                    nodata = src.read_masks(1) == 0
                     if len(data) == 4:
                         img = false_color(data, nodata)
                     else:
@@ -650,7 +650,7 @@ def main(start_date=None, end_date=None):
                 pth = row.source_tif
                 with rasterio.open(pth) as src:
                     data = src.read(out_dtype=np.float32)
-                    nodata = ~src.read_masks(1)
+                    nodata = src.read_masks(1) == 0
                     if len(data) == 4:
                         img = false_color(data, nodata)
                     else:

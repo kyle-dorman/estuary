@@ -49,7 +49,7 @@ Environment
 # --------------------------------------------------------------------------- #
 
 
-def regions_tifs(base_dir: Path) -> dict[str, list[Path]]:
+def regions_tifs(base_dir: Path, valid_regions: set[int]) -> dict[int, list[Path]]:
     """Walk BASE/SAT/YEAR/MONTH/REGION/files/*_SR_clip.tif and return
     [(region_name, [tif, tif, ...]), ...]
     """
@@ -61,7 +61,9 @@ def regions_tifs(base_dir: Path) -> dict[str, list[Path]]:
     regions = {}
     for tif in base_dir.glob(glob_str):
         # e.g. base/2024/06/my_region/files/scene_SR_clip.tif --> "my_region"
-        region = tif.parents[1].name
+        region = int(tif.parents[1].name)
+        if region not in valid_regions:
+            continue
         regions.setdefault(region, []).append(tif)
 
     for k in regions.keys():
@@ -138,6 +140,13 @@ def build_label_config() -> str:
     help="Directory under which JPEGs + tasks.json will be stored.",
 )
 @click.option(
+    "-rd",
+    "--regions-dir",
+    type=click.Path(file_okay=False, resolve_path=True, path_type=Path),
+    required=True,
+    help="Directory under which region geojsons are stored.",
+)
+@click.option(
     "--region",
     type=int,
     required=False,
@@ -152,6 +161,7 @@ def build_label_config() -> str:
 def main(
     base_dir: Path,
     labeling_base_dir: Path,
+    regions_dir: Path,
     region: int | None,
     ls_url: str,
 ) -> None:
@@ -159,9 +169,10 @@ def main(
     labeling_base_dir.mkdir(exist_ok=True, parents=True)
 
     click.echo(f"Scanning regions under {base_dir} …")
-    region_items = regions_tifs(base_dir)
+    valid_regions = set(int(p.stem) for p in regions_dir.glob("*.geojson"))
+    region_items = regions_tifs(base_dir, valid_regions)
     if region is not None:
-        region_items = {k: v for k, v in region_items.items() if k == str(region)}
+        region_items = {k: v for k, v in region_items.items() if k == region}
     if not region_items:
         click.echo("No regions found!", err=True)
         sys.exit(1)
@@ -169,32 +180,34 @@ def main(
     # Connect to Label Studio ---------------------------------------------- #
     client = LabelStudio(base_url=ls_url)
 
-    completed = []
+    existing_projects = {}
+    created_tasks = {}
     for pdir in labeling_base_dir.iterdir():
         if pdir.is_dir():
             with open(pdir / "tasks.json") as f:
-                completed.append(json.load(f)[0]["meta"]["region"])
-    # skipped_df = pd.read_csv(labeling_base_dir.parent.parent / "geos" / "skipped_regions.csv")
-    skipped = []  # list(map(str, skipped_df["Site code"].to_list()))
-
-    norun = skipped + completed
-    dorun = set(region_items.keys()) - set(norun)
+                tasks = json.load(f)
+                project_region = int(tasks[0]["meta"]["region"])
+                created_tasks[project_region] = tasks
+                existing_projects[project_region] = int(pdir.name)
 
     # Gather samples and convert to JPEGs ----------------------------------- #
-    for region in tqdm.tqdm(dorun):
+    for run_region in tqdm.tqdm(list(region_items.keys())):
         gc.collect()
         time.sleep(0.2)
-        tasks = []
-        paths = region_items[region]
+        tasks = created_tasks.get(run_region, [])
+        paths = region_items[run_region]
 
-        if "skysat" in str(paths[0]):
-            name = "SS"
+        if run_region in existing_projects:
+            project_id = existing_projects[run_region]
         else:
-            name = "Dove All"
+            if "skysat" in str(paths[0]):
+                name = "SS"
+            else:
+                name = "Dove All"
+            project_title = f"{name} - {run_region}"
+            project = client.projects.create(title=project_title, label_config=build_label_config())
+            project_id = project.id
 
-        project_title = f"{name} - {region}"
-        project = client.projects.create(title=project_title, label_config=build_label_config())
-        project_id = project.id
         out_dir = labeling_base_dir / f"{project_id:05d}"
         out_dir.mkdir(exist_ok=True, parents=True)
 
@@ -205,8 +218,11 @@ def main(
 
         images_dir = out_dir / "images"
         images_dir.mkdir(exist_ok=True, parents=True)
-
         for tif_path in paths:
+            matches = [t for t in tasks if Path(t["meta"]["source_tif"]) == tif_path]
+            if len(matches):
+                continue
+
             if tif_path.name.endswith("pansharpened_clip.tif"):
                 jpeg_name = tif_path.stem.replace("_pansharpened_clip", "") + ".jpg"
             else:
@@ -220,14 +236,13 @@ def main(
             task = {
                 "image": image_to_datauri(jpeg_path),
                 "meta": {
-                    "region": region,
+                    "region": run_region,
                     "source_tif": str(tif_path),
                     "source_jpeg": str(jpeg_path),
                 },
             }
 
             client.tasks.create(data=task, project=project_id)
-
             tasks.append(task)
 
         # # Create all tasks

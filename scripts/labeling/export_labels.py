@@ -37,6 +37,13 @@ def extract_label(task: dict) -> str | None:
     help="Directory with label studio projects.",
 )
 @click.option(
+    "-rd",
+    "--regions-dir",
+    type=click.Path(file_okay=False, resolve_path=True, path_type=Path),
+    required=True,
+    help="Directory under which region geojsons are stored.",
+)
+@click.option(
     "--out", required=True, type=click.Path(writable=True, path_type=Path), help="Output .csv file."
 )
 @click.option(
@@ -45,12 +52,13 @@ def extract_label(task: dict) -> str | None:
     show_default=True,
     help="Label Studio base URL.",
 )
-def main(labeling_dir: Path, out: Path, ls_url: str):
+def main(labeling_dir: Path, out: Path, regions_dir: Path, ls_url: str):
     # Must set env key LABEL_STUDIO_API_KEY
     ls = LabelStudio(base_url=ls_url)
 
     rows = []
     dirs = list(labeling_dir.iterdir())
+    valid_regions = set(int(p.stem) for p in regions_dir.glob("*.geojson"))
     for pdir in tqdm(dirs):
         if not pdir.is_dir():
             continue
@@ -70,17 +78,21 @@ def main(labeling_dir: Path, out: Path, ls_url: str):
             # meta may be stored at top-level or nested under data
             meta = task.get("data", {}).get("meta") or {}
             region = meta.get("region")
-            source_tif = meta.get("source_tif")
-            source_jpeg = meta.get("source_jpeg")
-            assert source_jpeg is not None
-            acquired = parse_dt_from_pth(Path(source_jpeg))
+            if int(region) not in valid_regions:
+                continue
+            source_tif = Path(meta["source_tif"])
+            if not source_tif.exists():
+                print(f"{source_tif} DOESNT EXIST. Skipping...")
+                continue
+            acquired = parse_dt_from_pth(source_tif)
+            instrument = "skysat" if "skysat" in str(source_tif) else source_tif.parents[5].name
             rows.append(
                 {
                     "region": region,
                     "source_tif": source_tif,
                     "label": label,
                     "acquired": acquired,
-                    "instrument": "skysat" if "skysat" in str(source_tif) else "dove",
+                    "instrument": instrument,
                 }
             )
 
