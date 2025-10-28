@@ -129,4 +129,4 @@ def simulate_clouds(
     darkener = 1.0 - shadow_strength * sC
     with_shadows = np.clip(with_clouds * darkener, 0, 1)
 
-    return with_shadows, alpha  # return mask too if you want to visualize
+    return with_shadows

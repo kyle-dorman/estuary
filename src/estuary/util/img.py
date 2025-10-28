@@ -1,4 +1,3 @@
-import logging
 from pathlib import Path
 
 import numpy as np
@@ -6,13 +5,7 @@ import rasterio
 from numpy.ma.core import MaskedArray
 from PIL import Image, ImageDraw, ImageFont
 
-from estuary.constants import FALSE_COLOR_4, FALSE_COLOR_8
-
-local_logger = logging.getLogger(__name__)
-
-
-def tif_paths(directory: Path) -> list[Path]:
-    return sorted([pth for pth in directory.iterdir() if pth.suffix == ".tif"])
+from estuary.util.constants import FALSE_COLOR_4, FALSE_COLOR_8
 
 
 def contrast_stretch(
@@ -116,38 +109,6 @@ def tif_to_rgb(pth: Path) -> np.ndarray:
             return np.zeros((*nodata.shape, 3), dtype=np.uint8)
 
         return false_color(data, nodata)
-
-
-def setup_logger(save_dir: Path | None = None, log_filename: str = "log.log"):
-    # Remove base handlers
-    root_logger = logging.getLogger()
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-
-    # Set level for logger
-    root_logger.setLevel(logging.INFO)
-
-    # Create a formatter
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-    if save_dir is not None:
-        # Create handler
-        file_handler = logging.FileHandler(save_dir / log_filename)  # Logs to a file
-
-        # Attach formatter to the handler
-        file_handler.setFormatter(formatter)
-
-        # Add handlers to the logger
-        root_logger.addHandler(file_handler)
-
-    # Create handler
-    console_handler = logging.StreamHandler()  # Logs to console
-
-    # Attach formatter to the handler
-    console_handler.setFormatter(formatter)
-
-    # Add handlers to the logger
-    root_logger.addHandler(console_handler)
 
 
 def draw_border(img: Image.Image, color: tuple[int, int, int]) -> Image.Image:

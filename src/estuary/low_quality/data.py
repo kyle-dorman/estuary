@@ -1,5 +1,4 @@
 import logging
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -10,21 +9,20 @@ import rasterio
 import torch
 from kornia.constants import Resample
 from lightning.pytorch import LightningDataModule
-from pyproj import Transformer
-from sklearn.model_selection import StratifiedGroupKFold
+from sklearn.discriminant_analysis import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import PowerTransformer
 from torch.utils.data import DataLoader, Dataset
 
-from estuary.model.config import (
-    EstuaryConfig,
-)
+from estuary.low_quality.config import QualityConfig
 from estuary.util.bands import Bands
 from estuary.util.data import cpu_count, load_normalization, parse_dt_from_pth
-from estuary.util.transforms import PowerTransformTorch, RandomChannelShift, ScaleNormalization
+from estuary.util.transforms import RandomChannelShift
 
 logger = logging.getLogger(__name__)
 
 
-def num_workers(conf: EstuaryConfig) -> int:
+def num_workers(conf: QualityConfig) -> int:
     # number of CUDA devices
     nd = max(1, conf.world_size)
     per_gpu_count = cpu_count() // nd
@@ -37,27 +35,14 @@ def num_workers(conf: EstuaryConfig) -> int:
     return nw
 
 
-def load_labels(conf: EstuaryConfig) -> pd.DataFrame:
-    return _load_labels(conf.classes, conf.data)
+def load_labels(conf: QualityConfig) -> pd.DataFrame:
+    return _load_labels(conf.data)
 
 
-def _load_labels(classes: Iterable[str], data_path: Path) -> pd.DataFrame:
+def _load_labels(data_path: Path) -> pd.DataFrame:
     df = pd.read_csv(data_path)
 
-    df["orig_label"] = df.label
-
-    if "perched open" not in classes:
-        df.loc[df.label == "perched open", "label"] = "open"
-
-    cls_diff = set(df.label.unique()) - set(classes)
-    if cls_diff:
-        logger.warning(f"Some label classes will be ignored {cls_diff}")
-    df = df[df.label.isin(classes)].copy()
-
-    # build a lookup dict → index
-    lookup = {tok: idx for idx, tok in enumerate(classes)}
-    # map to indices (will never produce NaN, because we pre-checked)
-    df["label_idx"] = df["label"].map(lookup)
+    df = df[df.cluster_label >= 0].copy()
 
     # Ensure acquired datetime and year columns exist
     if "acquired" not in df.columns:
@@ -77,107 +62,40 @@ def _load_labels(classes: Iterable[str], data_path: Path) -> pd.DataFrame:
     return df
 
 
-def create_splits(
-    conf: EstuaryConfig, verbose: bool = True
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Create train/val/test splits. Method from EstuaryConfig.split_method
+def create_splits(conf: QualityConfig, verbose: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Create train/val splits."""
+    rng = np.random.RandomState(conf.seed)
 
-    Supported strategies:
-      - "region": Read val/test holdout regions names from EstuaryConfig.region_splits
-      - "crossval": Run a cross validation. Get index from EstuaryConfig.cv_index
-            and num cross validations from EstuaryConfig.cv_folds
-      - "yearly": Split by calendar year using EstuaryConfig.val_year and EstuaryConfig.test_year
-    """
     df = load_labels(conf)
 
-    logger.info(f"Splitting dataset using {conf.split_method}")
+    logger.info("Splitting dataset")
 
-    if conf.split_method == "crossval":
-        assert conf.cv_index < conf.cv_folds
+    cloudy_df = df[df.cluster_label == 1]
+    good_df = df[df.cluster_label == 0]
 
-        sgkf = StratifiedGroupKFold(n_splits=conf.cv_folds, shuffle=True, random_state=conf.seed)
-        found = False
-        for i, (train_idx, val_idx) in enumerate(
-            sgkf.split(df, y=df["label_idx"], groups=df["region"])
-        ):
-            if i == conf.cv_index:
-                found = True
-                df_train = df.iloc[train_idx].copy()
-                df_val = df.iloc[val_idx].copy()
-                df_test = df_val.copy()
-                break
-        if not found:
-            raise ValueError(f"cv_index {conf.cv_index} out of range for n_splits={conf.cv_folds}")
-    elif conf.split_method == "region":
-        region_splits = pd.read_csv(conf.region_splits, index_col="region")
+    val_idxes = rng.choice(good_df.index, len(cloudy_df), replace=False)
 
-        df_train = df[df.region.isin(region_splits[region_splits.is_train].index)].copy()
-        df_val = df[df.region.isin(region_splits[region_splits.is_val].index)].copy()
-        df_test = df[df.region.isin(region_splits[region_splits.is_test].index)].copy()
-    elif conf.split_method == "yearly":
-        # Yearly split: require val_year and test_year, and split by year column
-        df["year"] = df["acquired"].dt.year
-        if conf.val_year is None or conf.test_year is None:
-            raise ValueError("yearly split requires conf.val_year and conf.test_year")
-        df_val = df[df["year"] == conf.val_year].copy()
-        df_test = df[df["year"] == conf.test_year].copy()
-        df_train = df[~df["year"].isin([conf.val_year, conf.test_year])].copy()
-        if df_val.empty:
-            raise ValueError(f"No samples found for val_year={conf.val_year}")
-        if df_test.empty:
-            raise ValueError(f"No samples found for test_year={conf.test_year}")
-    else:
-        raise RuntimeError(f"Unexpected split_method {conf.split_method}")
+    df_val = pd.concat([cloudy_df, good_df.loc[val_idxes]]).copy()
+    df_train = good_df[~good_df.index.isin(val_idxes)].copy()
 
     # Log split sizes
-    logger.info(
-        "Split sizes -> train: %d, val: %d, test: %d", len(df_train), len(df_val), len(df_test)
-    )
+    logger.info("Split sizes -> train: %d, val: %d", len(df_train), len(df_val))
     df_train["dataset"] = "train"
     df_val["dataset"] = "val"
-    df_test["dataset"] = "test"
     if verbose:
         logger.info("Train Class Split")
-        logger.info(df_train["label_idx"].value_counts().sort_index())
+        logger.info(df_train["cluster_label"].value_counts().sort_index())
         logger.info("Val Class Split")
-        logger.info(df_val["label_idx"].value_counts().sort_index())
-        logger.info("Test Class Split")
-        logger.info(df_test["label_idx"].value_counts().sort_index())
-    return df_train, df_val, df_test
+        logger.info(df_val["cluster_label"].value_counts().sort_index())
+    return df_train, df_val
 
 
-def calc_class_weights(conf: EstuaryConfig) -> tuple[float, ...]:
-    df, _, _ = create_splits(conf, verbose=False)
-
-    counts = df["label_idx"].value_counts().sort_index()
-    # counts is a Series([n0, n1, n2]), where ni = number of examples in class i
-
-    # total number of samples
-    N = counts.sum()
-
-    # number of classes
-    C = len(counts)
-
-    # weight for each class = N / (C * ni)
-    weights = N / (C * counts.values)  # type: ignore
-
-    return tuple(weights.tolist())
-
-
-def load_tif(pth: Path, config: EstuaryConfig) -> tuple[np.ndarray, tuple[float, float]]:
+def load_tif(pth: Path, config: QualityConfig) -> np.ndarray:
     """Read SR GeoTIFF, return array, centroid (lat, lon).
 
     The returned array shape is (C,H,W) for subsequent torch transforms.
     """
     with rasterio.open(pth) as src:
-        bounds = src.bounds
-        crs = src.crs
-        transformer = Transformer.from_crs(crs, 4326, always_xy=True)
-        # centroid in lon/lat then lat/lon ordering
-        centroid_x = (bounds.left + bounds.right) / 2
-        centroid_y = (bounds.top + bounds.bottom) / 2
-        lon, lat = transformer.transform(centroid_x, centroid_y)
-
         data = src.read(out_dtype=np.float32)
         nodata = src.read_masks(1) == 0
 
@@ -193,19 +111,19 @@ def load_tif(pth: Path, config: EstuaryConfig) -> tuple[np.ndarray, tuple[float,
             else:
                 img = np.array([data[b] for b in bands])
 
-        return img, (lon, lat)
+        return img
 
 
 # -------------------------------------------------
 # Dataset
 # -------------------------------------------------
-class EstuaryDataset(Dataset):
+class LowQualityDataset(Dataset):
     """Loads PlanetScope SR data and builds a datacube."""
 
     def __init__(
         self,
         df: pd.DataFrame,
-        conf: EstuaryConfig,
+        conf: QualityConfig,
         train: bool = False,
     ) -> None:
         """
@@ -218,8 +136,21 @@ class EstuaryDataset(Dataset):
         self.df = df.reset_index(drop=True)
         self.conf = conf
         self.train = train
+
+        # Create normaliztion
         assert conf.normalization_path is not None
         self.norm_stats = load_normalization(conf.normalization_path, conf.bands)
+        scale = np.array([self.norm_stats.max_pixel_value] * self.conf.bands.num_channels())
+        st = StandardScaler(with_mean=False)
+        if self.norm_stats.power_scale:
+            pt = PowerTransformer(standardize=False)
+            pt.lambdas_ = self.norm_stats.lambdas
+            max_value = pt.transform(scale[None])[0]
+            st.scale_ = max_value
+            self.norm = Pipeline([("PowerTransformer", pt), ("StandardScaler", st)])
+        else:
+            st.scale_ = scale
+            self.norm = Pipeline([("StandardScaler", st)])
 
         if train:
             self.resize_aug = K.RandomResizedCrop(
@@ -233,15 +164,6 @@ class EstuaryDataset(Dataset):
             )
 
         augs: list[Any] = []
-        if self.norm_stats.power_scale:
-            augs.append(
-                PowerTransformTorch(
-                    self.norm_stats.lambdas.tolist(), self.norm_stats.max_pixel_value
-                )
-            )
-        else:
-            augs.append(ScaleNormalization(self.norm_stats.max_pixel_value))
-
         if train:
             augs += [
                 K.RandomVerticalFlip(p=self.conf.vertical_flip_p),
@@ -256,22 +178,11 @@ class EstuaryDataset(Dataset):
                     p=conf.contrast_p,
                 ),
                 K.RandomSharpness(sharpness=self.conf.sharpness, p=self.conf.sharpness_p),
-                K.RandomGaussianNoise(
-                    mean=self.conf.gauss_mean,
-                    std=self.conf.gauss_std,
-                    p=self.conf.gauss_p,
-                ),
-                K.RandomGaussianBlur(
-                    kernel_size=conf.blur_kernel_size,
-                    sigma=conf.blur_sigma,
-                    p=conf.blur_p,
-                ),
                 RandomChannelShift(
                     shift_limit=self.conf.channel_shift_limit,
                     num_channels=conf.bands.num_channels(),
                     p=self.conf.channel_shift_p,
                 ),
-                K.RandomErasing(scale=self.conf.erasing_scale, p=self.conf.erasing_p),
             ]
 
         augs += [
@@ -297,8 +208,14 @@ class EstuaryDataset(Dataset):
         if not tif_path.exists():
             raise FileNotFoundError(tif_path)
 
-        data, _ = load_tif(tif_path, self.conf)
-        pixels = torch.from_numpy(data.astype(np.float32))
+        data = load_tif(tif_path, self.conf)
+        shp = data.shape
+        norm_data = self.norm.transform(data.reshape(len(data), -1).T).T.reshape(shp)
+
+        if self.train:
+            norm_data = self.perturb_image(norm_data)
+
+        pixels = torch.from_numpy(norm_data.astype(np.float32))
         # Resize can create negative values :(
         pixels = self.resize_aug(pixels).clip(0, self.norm_stats.max_pixel_value)
         # Some Kornia per-sample augs (e.g., RandomResizedCrop) can return (1,C,H,W) for a 3D input.
@@ -307,27 +224,28 @@ class EstuaryDataset(Dataset):
         if pixels.ndim == 4 and pixels.shape[0] == 1:
             pixels = pixels.squeeze(0)
 
-        orig_label_str = row["orig_label"]
         label = torch.tensor(row["label_idx"], dtype=torch.long)
 
         return {
             "image": pixels,
             "label": label,
-            "orig_label": orig_label_str,
             "source_tif": str(tif_path),
             "region": row["region"],
         }
+
+    def perturb_image(self, data: np.ndarray) -> np.ndarray:
+        return data
 
 
 # -------------------------------------------------
 # Lightning DataModule
 # -------------------------------------------------
-class EstuaryDataModule(LightningDataModule):
+class LowQualityDataModule(LightningDataModule):
     """train/val/test splits with stratified shuffle on the `label` column."""
 
     def __init__(
         self,
-        conf: EstuaryConfig,
+        conf: QualityConfig,
     ) -> None:
         super().__init__()
         self.conf = conf
@@ -348,32 +266,26 @@ class EstuaryDataModule(LightningDataModule):
         # verify files exist & readable
         if not self.conf.data.exists():
             raise FileNotFoundError(self.conf.data)
-        if not self.conf.metadata_path.exists():
-            raise FileNotFoundError(self.conf.metadata_path)
+        if self.conf.normalization_path is not None and not self.conf.normalization_path.exists():
+            raise FileNotFoundError(self.conf.normalization_path)
 
     def setup(self, stage: str | None = None) -> None:
         if self.train_ds is None or self.val_ds is None or self.test_ds is None:
-            df_train, df_val, df_test = create_splits(self.conf)
+            df_train, df_val = create_splits(self.conf)
 
             # build datasets
-            self.train_ds = EstuaryDataset(
+            self.train_ds = LowQualityDataset(
                 df=df_train,
                 conf=self.conf,
                 train=True,
             )
             self.train_aug = self.train_ds.transforms
-            self.val_ds = EstuaryDataset(
+            self.val_ds = LowQualityDataset(
                 df=df_val,
                 conf=self.conf,
                 train=False,
             )
             self.val_aug = self.val_ds.transforms
-            self.test_ds = EstuaryDataset(
-                df=df_test,
-                conf=self.conf,
-                train=False,
-            )
-            self.test_aug = self.test_ds.transforms
 
     # -------- DataLoaders --------
     def train_dataloader(self):
@@ -392,17 +304,6 @@ class EstuaryDataModule(LightningDataModule):
         assert self.val_ds is not None
         return DataLoader(
             self.val_ds,
-            batch_size=self.conf.batch_size,
-            shuffle=False,
-            num_workers=num_workers(self.conf),
-            pin_memory=self.conf.pin_memory,
-            persistent_workers=self.conf.persistent_workers,
-        )
-
-    def test_dataloader(self):
-        assert self.test_ds is not None
-        return DataLoader(
-            self.test_ds,
             batch_size=self.conf.batch_size,
             shuffle=False,
             num_workers=num_workers(self.conf),

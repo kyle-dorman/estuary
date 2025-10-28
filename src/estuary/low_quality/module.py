@@ -2,7 +2,6 @@ import logging
 
 import kornia.augmentation as K
 import torch
-from claymodel.module import ClayMAEModule
 from lightning.pytorch import LightningModule
 from lightning.pytorch.loggers import TensorBoardLogger
 from matplotlib import pyplot as plt
@@ -15,67 +14,30 @@ from torchmetrics.classification import (
     BinaryCalibrationError,
     BinaryConfusionMatrix,
     BinaryF1Score,
-    MulticlassAccuracy,
-    MulticlassAUROC,
-    MulticlassCohenKappa,
-    MulticlassConfusionMatrix,
-    MulticlassF1Score,
-    MulticlassPrecision,
-    MulticlassRecall,
 )
 from torchvision.utils import make_grid
 
-from estuary.clay.classifier import ClayClassifier, ClayConvDecoder, ClayTransformerDecoder
-from estuary.model.config import EstuaryConfig, ModelType
-from estuary.model.data import load_normalization
-from estuary.model.timm_model import TimmModel
+from estuary.low_quality.config import QualityConfig
+from estuary.low_quality.timm_model import TimmModel
+from estuary.util.data import load_normalization
 from estuary.util.nn import FocalLoss
 from estuary.util.transforms import contrast_stretch_torch
 
 logger = logging.getLogger(__name__)
 
 
-class EstuaryModule(LightningModule):
-    def __init__(self, conf: EstuaryConfig):
+class LowQualityModule(LightningModule):
+    def __init__(self, conf: QualityConfig):
         self.conf = conf
-        self.is_binary = len(conf.classes) == 2
-        if self.is_binary:
-            self.num_classes = 1
-        else:
-            self.num_classes = len(conf.classes)
+        assert len(self.conf.classes) == 2
+        self.num_classes = 1
         assert conf.normalization_path is not None
         self.norm_stats = load_normalization(conf.normalization_path, conf.bands)
 
         super().__init__()
         self.save_hyperparameters(conf)
 
-        if conf.model_type == ModelType.CLAY:
-            clay_model = ClayMAEModule.load_from_checkpoint(
-                conf.clay_encoder_weights,
-                metadata_path=conf.metadata_path,
-                strict=False,
-                mask_ratio=0.0,
-                shuffle=False,
-            )
-            if conf.freeze_encoder:
-                clay_model = clay_model.eval()
-            encoder = clay_model.model.encoder
-            # Freeze the encoder parameters
-            if conf.freeze_encoder:
-                for param in encoder.parameters():
-                    param.requires_grad = False
-            assert encoder.dim == conf.encoder_dim
-            decoder = (
-                ClayConvDecoder(conf, self.num_classes)
-                if conf.decoder_name == "conv"
-                else ClayTransformerDecoder(conf, self.num_classes)
-            )
-            clf = ClayClassifier(encoder, decoder)
-        elif conf.model_type == ModelType.TIMM:
-            clf = TimmModel(conf, self.num_classes)
-        else:
-            raise RuntimeError(f"Unsupported model_type {conf.model_type}")
-
+        clf = TimmModel(conf, self.num_classes)
         if conf.debug or not conf.compile:
             self.model = clf
         else:
@@ -83,73 +45,27 @@ class EstuaryModule(LightningModule):
 
         logger.info("Creating metrics")
 
-        if self.is_binary:
-            # Binary metrics operate on probabilities in [0,1]
-            metrics_dict = {
-                "f1": BinaryF1Score(),
-                "accuracy": BinaryAccuracy(),
-                "auroc": BinaryAUROC(),
-            }
-            self.train_cm = BinaryConfusionMatrix()
-            self.val_cm = BinaryConfusionMatrix()
-            self.test_cm = BinaryConfusionMatrix()
-            self.train_ece = BinaryCalibrationError()
-            self.val_ece = BinaryCalibrationError()
-            self.test_ece = BinaryCalibrationError()
-        else:
-            metrics_dict = {
-                "f1": MulticlassF1Score(num_classes=self.num_classes),
-                "precision": MulticlassPrecision(num_classes=self.num_classes),
-                "recall": MulticlassRecall(num_classes=self.num_classes),
-                "accuracy": MulticlassAccuracy(num_classes=self.num_classes),
-                "cohenkappa": MulticlassCohenKappa(num_classes=self.num_classes),
-                "auroc": MulticlassAUROC(num_classes=self.num_classes),
-            }
-            # per-class precision vector (multiclass only)
-            metrics_dict["precision_perclass"] = MulticlassPrecision(
-                num_classes=self.num_classes, average="none"
-            )
-            self.train_cm = MulticlassConfusionMatrix(num_classes=self.num_classes)
-            self.val_cm = MulticlassConfusionMatrix(num_classes=self.num_classes)
-            self.test_cm = MulticlassConfusionMatrix(num_classes=self.num_classes)
-            self.train_ece = BinaryCalibrationError()
-            self.val_ece = BinaryCalibrationError()
-            self.test_ece = BinaryCalibrationError()
+        # Binary metrics operate on probabilities in [0,1]
+        metrics_dict = {
+            "f1": BinaryF1Score(),
+            "accuracy": BinaryAccuracy(),
+            "auroc": BinaryAUROC(),
+        }
+        self.train_cm = BinaryConfusionMatrix()
+        self.val_cm = BinaryConfusionMatrix()
+        self.train_ece = BinaryCalibrationError()
+        self.val_ece = BinaryCalibrationError()
 
         metrics = MetricCollection(metrics_dict)
         self.train_metrics = metrics.clone(prefix="train/").to(self.device)
         self.val_metrics = metrics.clone(prefix="val/").to(self.device)
-        self.test_metrics = metrics.clone(prefix="test/").to(self.device)
 
-        # Loss
-        weights = (
-            torch.tensor(conf.class_weights, device=self.device)
-            if conf.class_weights is not None
-            else None
-        )
-        if self.is_binary:
-            if conf.loss_fn == "ce":
-                # Single-logit BCE with logits. Turn class weights into pos_weight if provided.
-                pos_weight = None
-                if weights is not None and len(weights) == 2:
-                    # CE weights ~ [w0, w1]; BCE pos_weight scales positives.
-                    w0, w1 = weights[0].item(), weights[1].item()
-                    if w0 > 0:
-                        pos_weight = torch.tensor([w1 / w0], device=self.device)
-                self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-            elif conf.loss_fn == "focal":
-                self.loss_fn = FocalLoss(gamma=conf.focal_gamma, alpha=conf.focal_alpha)
-            else:
-                raise RuntimeError(f"Invalid loss_fn {conf.loss_fn}")
+        if conf.loss_fn == "ce":
+            self.loss_fn = nn.BCEWithLogitsLoss()
+        elif conf.loss_fn == "focal":
+            self.loss_fn = FocalLoss(gamma=conf.focal_gamma, alpha=conf.focal_alpha)
         else:
-            if conf.loss_fn == "ce":
-                self.loss_fn = nn.CrossEntropyLoss(
-                    label_smoothing=conf.smooth_factor, weight=weights
-                )
-            elif conf.loss_fn == "focal":
-                self.loss_fn = FocalLoss(gamma=conf.focal_gamma, alpha=conf.focal_alpha)
-            else:
-                raise RuntimeError(f"Invalid loss_fn {conf.loss_fn}")
+            raise RuntimeError(f"Invalid loss_fn {conf.loss_fn}")
 
     def forward(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
         return self.model(x)
@@ -192,18 +108,14 @@ class EstuaryModule(LightningModule):
 
     def step(
         self,
-        train_test_val: str,
+        train_val: str,
         batch: dict[str, torch.Tensor],
         batch_idx: int,
     ) -> torch.Tensor:
-        if train_test_val == "train":
+        if train_val == "train":
             metrics = self.train_metrics
             cm = self.train_cm
             ece = self.train_ece
-        elif train_test_val == "test":
-            metrics = self.test_metrics
-            cm = self.test_cm
-            ece = self.test_ece
         else:
             metrics = self.val_metrics
             cm = self.val_cm
@@ -212,46 +124,24 @@ class EstuaryModule(LightningModule):
         logits: torch.Tensor = self(batch)
         target = batch["label"]
 
-        if self.is_binary:
-            # logits: [B, 1]; targets: int {0,1}
-            logits = logits.view(-1)
-            target_f = target.float()
+        # logits: [B, 1]; targets: int {0,1}
+        logits = logits.view(-1)
+        target_f = target.float()
 
-            if self.conf.perch_smooth_factor > 1e-4:
-                # If no smooth_factor, will just use 0.
-                label_str = batch["orig_label"]
-                is_hard = torch.tensor(
-                    [a == "perched open" for a in label_str], dtype=torch.bool, device=target.device
-                )
-                eps = torch.where(is_hard, self.conf.perch_smooth_factor, self.conf.smooth_factor)
-                target_f = target_f * (1 - eps) + eps * 0.5
-            elif self.conf.smooth_factor > 1e-4:
-                target_f = target_f * (1 - self.conf.smooth_factor) + 0.5 * self.conf.smooth_factor
+        loss = self.loss_fn(logits, target_f)
+        probs_pos = torch.sigmoid(logits)
 
-            loss = self.loss_fn(logits, target_f)
-            probs_pos = torch.sigmoid(logits)
+        # Metrics expect probabilities for binary tasks
+        metrics.update(probs_pos, target)
+        # Confusion matrix uses hard labels
+        preds_label = (probs_pos >= 0.5).long()
+        cm.update(preds_label, target)
 
-            # Metrics expect probabilities for binary tasks
-            metrics.update(probs_pos, target)
-            # Confusion matrix uses hard labels
-            preds_label = (probs_pos >= 0.5).long()
-            cm.update(preds_label, target)
-
-            # ECE on positive class
-            ece.update(probs_pos, target)
-        else:
-            # Multiclass: logits [B, C]
-            loss = self.loss_fn(logits, target)
-            metrics.update(logits, target)  # torchmetrics multiclass can accept logits
-            cm.update(logits.argmax(dim=1), target)
-
-            # Open ECE assumes index 1 is 'open'
-            assert self.conf.classes.index("open") == 1
-            probs = torch.softmax(logits, dim=1)[:, 1]
-            ece.update(probs, target)
+        # ECE on positive class
+        ece.update(probs_pos, target)
 
         self.log_dict(
-            {f"{train_test_val}/loss": loss},
+            {f"{train_val}/loss": loss},
             prog_bar=True,
             sync_dist=True,
             batch_size=len(batch["image"]),
@@ -259,15 +149,11 @@ class EstuaryModule(LightningModule):
 
         return loss
 
-    def on_step_end(self, train_test_val: str) -> None:
-        if train_test_val == "train":
+    def on_step_end(self, train_val: str) -> None:
+        if train_val == "train":
             metrics = self.train_metrics
             cm = self.train_cm
             ece = self.train_ece
-        elif train_test_val == "test":
-            metrics = self.test_metrics
-            cm = self.test_cm
-            ece = self.test_ece
         else:
             metrics = self.val_metrics
             cm = self.val_cm
@@ -276,10 +162,10 @@ class EstuaryModule(LightningModule):
         # compute all metrics
         results = metrics.compute()
         # extract and log per-class precision scalars
-        if f"{train_test_val}/precision_perclass" in results:
-            prec_vals = results.pop(f"{train_test_val}/precision_perclass")
+        if f"{train_val}/precision_perclass" in results:
+            prec_vals = results.pop(f"{train_val}/precision_perclass")
             for idx, cls in enumerate(self.conf.classes):
-                results[f"{train_test_val}/precision_{cls}"] = prec_vals[idx]
+                results[f"{train_val}/precision_{cls}"] = prec_vals[idx]
         # log the remaining metrics
         self.log_dict(results, sync_dist=True)
         metrics.reset()
@@ -291,13 +177,13 @@ class EstuaryModule(LightningModule):
         # `self.logger` is a TensorBoardLogger
         tlog: TensorBoardLogger = self.logger  # type: ignore
         assert tlog.experiment is not None
-        tlog.experiment.add_figure(f"cm/{train_test_val}", fig, global_step=self.current_epoch)
+        tlog.experiment.add_figure(f"cm/{train_val}", fig, global_step=self.current_epoch)
         plt.close(fig)
         cm.reset()
 
         # Log open ECE
         results = ece.compute()
-        self.log_dict({f"{train_test_val}/ece_open": results}, sync_dist=True)
+        self.log_dict({f"{train_val}/ece_open": results}, sync_dist=True)
         ece.reset()
 
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
@@ -319,18 +205,6 @@ class EstuaryModule(LightningModule):
 
     def on_validation_epoch_end(self):
         self.on_step_end("val")
-
-    def test_step(
-        self,
-        batch: dict[str, torch.Tensor],
-        batch_idx: int,
-    ):
-        if batch_idx == 0:
-            self._log_batch_images(batch["image"], split="test", step=self.current_epoch)
-        return self.step("test", batch, batch_idx)
-
-    def on_test_epoch_end(self):
-        self.on_step_end("test")
 
     # ------------------------------------------------------------------
     #  Optimiser + LR schedule
@@ -448,7 +322,7 @@ class EstuaryModule(LightningModule):
             milestones.append(warmup_epochs)
 
         if self.conf.scheduler == "cosine":
-            cosine_epochs = self.conf.epochs - warmup_epochs - self.conf.flat_epochs
+            cosine_epochs = self.conf.epochs - warmup_epochs
             assert cosine_epochs > 0
             cosine = CosineAnnealingLR(
                 optimizer,
@@ -458,13 +332,6 @@ class EstuaryModule(LightningModule):
             schedulers.append(cosine)
         else:
             raise RuntimeError(f"Unsuported scheduler {self.conf.scheduler}")
-
-        if self.conf.flat_epochs > 0:
-            flat = torch.optim.lr_scheduler.ConstantLR(
-                optimizer, factor=self.conf.min_lr_scale, total_iters=self.conf.flat_epochs
-            )
-            schedulers.append(flat)
-            milestones.append(warmup_epochs + cosine_epochs)
 
         if len(schedulers) > 1:
             scheduler = SequentialLR(optimizer, schedulers=schedulers, milestones=milestones)

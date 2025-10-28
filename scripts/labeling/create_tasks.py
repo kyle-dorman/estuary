@@ -13,7 +13,7 @@ from label_studio_sdk import LabelStudio
 from PIL import Image
 
 from estuary.model.data import parse_dt_from_pth
-from estuary.util import tif_to_rgb
+from estuary.util.img import tif_to_rgb
 
 """
 create_tasks.py

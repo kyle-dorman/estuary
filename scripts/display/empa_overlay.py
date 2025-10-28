@@ -14,7 +14,7 @@ from matplotlib.axes import Axes
 from PIL import Image
 
 from estuary.model.data import parse_dt_from_pth
-from estuary.util import broad_band, draw_border, false_color
+from estuary.util.img import broad_band, draw_border, false_color
 
 
 def filter_polars_by_date(

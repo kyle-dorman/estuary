@@ -14,10 +14,9 @@ from estuary.model.config import Bands, EstuaryConfig
 from estuary.model.data import (
     create_splits,
     load_tif,
-    normalize_latlon,
-    normalize_timestamp,
     num_workers,
 )
+from estuary.util.data import normalize_latlon, normalize_timestamp
 
 logger = logging.getLogger(__name__)
 

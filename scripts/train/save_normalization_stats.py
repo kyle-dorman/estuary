@@ -13,8 +13,7 @@ from matplotlib import pyplot as plt
 from sklearn.discriminant_analysis import StandardScaler
 from sklearn.preprocessing import PowerTransformer
 
-from estuary.constants import BAND_COLORS, BAND_NAMES
-from estuary.model.config import EIGHT_TO_4
+from estuary.util.constants import BAND_COLORS, BAND_NAMES, EIGHT_TO_4
 
 logger = logging.getLogger(__name__)
 
