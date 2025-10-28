@@ -376,6 +376,7 @@ class EstuaryDataset(Dataset):
             "label": label,
             "orig_label": orig_label_str,
             "source_tif": str(tif_path),
+            "region": row["region"],
         }
 
 

@@ -34,7 +34,7 @@ def main() -> None:
 
     seed_everything(conf.seed, workers=True)
 
-    # ------------- Run directory (timestamp‑based) [C7] -------------
+    # ------------- Run directory (timestamp-based) [C7] -------------
     rank = os.environ.get("NODE_RANK", None)
     model_training_root = Path(conf.model_training_root) / conf.project / "train"
     model_training_root.mkdir(exist_ok=True, parents=True)
@@ -47,7 +47,7 @@ def main() -> None:
         model_dir = sorted(list(model_training_root.glob("*-*")))[-1]
         log_file_name = f"log_{rank}.log"
 
-    # # sub‑dirs Lightning expects
+    # # sub-dirs Lightning expects
     # (model_dir / "wandb").mkdir(exist_ok=True)
 
     # Setup logger

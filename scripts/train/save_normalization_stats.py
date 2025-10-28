@@ -22,8 +22,6 @@ logger = logging.getLogger(__name__)
 @click.command()
 @click.option("-l", "--labels-path", type=click.Path(exists=True, path_type=Path), required=True)
 @click.option("-s", "--save-path", type=click.Path(exists=False, path_type=Path), required=True)
-@click.option("--splits-path", type=click.Path(exists=True, path_type=Path), required=True)
-@click.option("--split", type=str, default="train")
 @click.option("-m", "--max-raw-pixel-value", type=int, default=7e3)
 @click.option("-c", "--min_count", type=int, default=10)
 @click.option("--max-std", type=float, default=3.0)
@@ -32,8 +30,6 @@ logger = logging.getLogger(__name__)
 def main(
     labels_path: Path,
     save_path: Path,
-    splits_path: Path,
-    split: str,
     max_raw_pixel_value: int,
     min_count: int,
     max_std: float,
@@ -42,23 +38,12 @@ def main(
 ):
     logger.info("Calculating normalization statistics")
 
-    save_path = Path(save_path)
     save_path.mkdir(exist_ok=True, parents=True)
 
     labels = pd.read_csv(labels_path)
     labels = labels[labels.label != "unsure"]
-    region_splits = pd.read_csv(splits_path)
 
     rng = np.random.default_rng(seed=42)
-
-    if split == "train":
-        labels = labels[labels.region.isin(region_splits[region_splits.is_train].region)]
-    elif split == "val":
-        labels = labels[labels.region.isin(region_splits[region_splits.is_val].region)]
-    elif split == "test":
-        labels = labels[labels.region.isin(region_splits[region_splits.is_test].region)]
-    else:
-        raise RuntimeError(f"Invlaid split {split}")
 
     # Prepare counters
     num_bins = max_raw_pixel_value

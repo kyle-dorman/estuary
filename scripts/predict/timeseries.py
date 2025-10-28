@@ -63,7 +63,7 @@ def main(labels_path: Path, model_path: Path, save_path: Path | None):
                 "y_true": batch["label"][0].detach().cpu().numpy(),
                 "y_prob": probs,
                 "y_pred": preds,
-                "region": int(Path(batch["source_tif"][0]).parents[1].name),
+                "region": batch["region"].detach().cpu().numpy().tolist()[0],
                 "dataset": "train",
             }
         )

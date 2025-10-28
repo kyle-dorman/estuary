@@ -133,7 +133,6 @@ class EstuaryConfig:
     vertical_flip_p: float = 0.5
     rotation_p: float = 0.1
     metadata_path: Path = Path("/Users/kyledorman/data/models/clay/metadata.yaml")
-    # /Volumes/x10pro/estuary/dataset/normalization/stats.json
     normalization_path: Path | None = None
     contrast: float = 0.05
     contrast_p: float = 0.1

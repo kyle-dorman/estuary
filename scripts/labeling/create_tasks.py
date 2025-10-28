@@ -181,20 +181,21 @@ def main(
     client = LabelStudio(base_url=ls_url)
 
     existing_projects = {}
-    created_tasks = {}
+    region_created_tasks = {}
     for pdir in labeling_base_dir.iterdir():
         if pdir.is_dir():
             with open(pdir / "tasks.json") as f:
                 tasks = json.load(f)
                 project_region = int(tasks[0]["meta"]["region"])
-                created_tasks[project_region] = tasks
+                region_created_tasks[project_region] = tasks
                 existing_projects[project_region] = int(pdir.name)
 
     # Gather samples and convert to JPEGs ----------------------------------- #
     for run_region in tqdm.tqdm(list(region_items.keys())):
         gc.collect()
         time.sleep(0.2)
-        tasks = created_tasks.get(run_region, [])
+        tasks = region_created_tasks.get(run_region, [])
+        created_tasks_count = 0
         paths = region_items[run_region]
 
         if run_region in existing_projects:
@@ -244,6 +245,9 @@ def main(
 
             client.tasks.create(data=task, project=project_id)
             tasks.append(task)
+            created_tasks_count += 1
+        if created_tasks_count:
+            print("Create", created_tasks_count, "for region", run_region)
 
         # # Create all tasks
         # bulk_url = f"api/projects/{project_id}/tasks/bulk/"

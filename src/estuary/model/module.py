@@ -360,7 +360,7 @@ class EstuaryModule(LightningModule):
         )
 
         # --------------------------------------------------------------
-        # Parameter groups: apply weight‑decay only where it matters
+        # Parameter groups: apply weight-decay only where it matters
         # --------------------------------------------------------------
         norm_modules = (
             nn.BatchNorm1d,
@@ -444,7 +444,7 @@ class EstuaryModule(LightningModule):
             raise RuntimeError(f"Unexpected optimizer {self.conf.optimizer}")
 
         # --------------------------------------------------------------
-        # Scheduler: Linear warm‑up  ➜  Cosine annealing
+        # Scheduler: Linear warm-up  ➜  Cosine annealing
         # --------------------------------------------------------------
         schedulers, milestones = [], []
         warmup_epochs = self.conf.warmup_epochs

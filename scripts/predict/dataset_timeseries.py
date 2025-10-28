@@ -46,7 +46,6 @@ def main():
     else:
         fold = -1
 
-    save_path = Path(args.model_path).parent.parent / "preds.csv"
     results = []
     for batch in tqdm.tqdm(dl, total=len(dl)):
         batch = ds.transforms(batch)
@@ -64,7 +63,7 @@ def main():
                     "y_true": batch["label"][i].detach().cpu().numpy(),
                     "y_prob": probs_pos[i].detach().cpu().numpy()[0],
                     "y_pred": (probs_pos[i] > 0.5).to(torch.int32).detach().cpu().numpy()[0],
-                    "region": int(Path(batch["source_tif"][i]).parents[2].name),
+                    "region": batch["region"].detach().cpu().numpy().tolist()[0],
                     "fold": fold,
                 }
             )
@@ -74,6 +73,8 @@ def main():
         results_df, ds.df[["source_tif", "orig_label", "dataset"]], on="source_tif", how="left"
     )
     results_df["correct"] = results_df.y_true == results_df.y_pred
+
+    save_path = Path(args.model_path).parent.parent / "preds.csv"
     if save_path.exists():
         os.remove(save_path)
     results_df.to_csv(save_path, index=False)

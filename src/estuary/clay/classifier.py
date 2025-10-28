@@ -66,7 +66,7 @@ class ClayConvDecoder(nn.Module):
 
     @staticmethod
     def _init_weights(m: nn.Module) -> None:
-        """Kaiming‑normal for convs, constant‑one for norm layers, truncated normal for FC."""
+        """Kaiming-normal for convs, constant-one for norm layers, truncated normal for FC."""
         if isinstance(m, nn.Conv2d):
             nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
         elif isinstance(m, nn.BatchNorm2d | nn.GroupNorm):

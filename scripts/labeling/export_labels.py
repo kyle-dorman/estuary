@@ -77,15 +77,18 @@ def main(labeling_dir: Path, out: Path, regions_dir: Path, ls_url: str):
                 continue
             # meta may be stored at top-level or nested under data
             meta = task.get("data", {}).get("meta") or {}
-            region = meta.get("region")
+            region = int(meta["region"])
             if int(region) not in valid_regions:
                 continue
             source_tif = Path(meta["source_tif"])
-            if not source_tif.exists():
+            instrument = "skysat" if "skysat" in str(source_tif) else source_tif.parents[5].name
+
+            # We are missing some SkySat tifs but have saved images for these. Allow these.
+            # Don't allow missing dove as we need these for training/inference.
+            if instrument != "skysat" and not source_tif.exists():
                 print(f"{source_tif} DOESNT EXIST. Skipping...")
                 continue
             acquired = parse_dt_from_pth(source_tif)
-            instrument = "skysat" if "skysat" in str(source_tif) else source_tif.parents[5].name
             rows.append(
                 {
                     "region": region,

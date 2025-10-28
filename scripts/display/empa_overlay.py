@@ -359,7 +359,7 @@ def main(start_date=None, end_date=None):
     )
 
     preds_all = pd.read_csv(
-        Path("/Users/kyledorman/data/results/estuary/train/20251008-151833/timeseries_preds.csv")
+        Path("/Users/kyledorman/data/results/estuary/train/20251021-151419/timeseries_preds.csv")
     )
     preds_all["acquired"] = preds_all["source_tif"].apply(lambda p: parse_dt_from_pth(Path(p)))
     # normalize times
