@@ -32,6 +32,13 @@ class TimmModel(nn.Module):
             kwargs.pop("drop_path_rate")
         self.model = timm.create_model(**kwargs)  # type: ignore
 
+        head_names = ["stages.3.blocks.2", "head", "classifier"]
+
+        if conf.freeze_encoder:
+            for name, param in self.model.named_parameters():
+                if not any(k in name for k in head_names):
+                    param.requires_grad = False
+
     def forward(self, data: dict[str, torch.Tensor]) -> torch.Tensor:
         if self.head is not None:
             x = self.model.forward_features(data["image"])  # type: ignore

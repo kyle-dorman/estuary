@@ -9,17 +9,42 @@ import rasterio
 import torch
 from kornia.constants import Resample
 from lightning.pytorch import LightningDataModule
-from sklearn.discriminant_analysis import StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import PowerTransformer
 from torch.utils.data import DataLoader, Dataset
 
 from estuary.low_quality.config import QualityConfig
 from estuary.util.bands import Bands
 from estuary.util.data import cpu_count, load_normalization, parse_dt_from_pth
-from estuary.util.transforms import RandomChannelShift
+from estuary.util.transforms import (
+    MisalignedImage,
+    PowerTransformTorch,
+    RandomPlasmaFog,
+    ScaledRandomGaussianNoise,
+    ScaleNormalization,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def make_blur_aug():
+    return K.AugmentationSequential(
+        K.RandomMotionBlur(
+            kernel_size=9,
+            angle=35,
+            direction=0.5,
+            border_type=2,
+            p=1.0,
+        ),
+        K.RandomGaussianBlur(
+            kernel_size=7,
+            sigma=(1.0, 3.0),
+            p=1.0,
+        ),
+        K.RandomBoxBlur(
+            kernel_size=(7, 7),
+            p=1.0,
+        ),
+        random_apply=1,
+    )
 
 
 def num_workers(conf: QualityConfig) -> int:
@@ -42,8 +67,6 @@ def load_labels(conf: QualityConfig) -> pd.DataFrame:
 def _load_labels(data_path: Path) -> pd.DataFrame:
     df = pd.read_csv(data_path)
 
-    df = df[df.cluster_label >= 0].copy()
-
     # Ensure acquired datetime and year columns exist
     if "acquired" not in df.columns:
         if "source_tif" in df.columns:
@@ -62,24 +85,31 @@ def _load_labels(data_path: Path) -> pd.DataFrame:
     return df
 
 
-def create_splits(conf: QualityConfig, verbose: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
+def create_splits(
+    conf: QualityConfig, verbose: bool = True
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Create train/val splits."""
-    rng = np.random.RandomState(conf.seed)
+    df_train = load_labels(conf)
+    df_train = df_train[df_train.cluster_label >= 0].copy()
 
-    df = load_labels(conf)
+    df_test = _load_labels(conf.test_data)
+    df_test["cluster_label"] = df_test.label.apply(lambda a: int(a == "unsure"))
+
+    df_val = _load_labels(conf.val_data)
+    df_val["cluster_label"] = df_val.label.apply(lambda a: int(a == "unsure"))
+
+    test_images = df_test.source_tif.tolist()
+    df_val = df_val[~df_val.source_tif.isin(test_images)].reset_index(drop=True)
+    test_val_images = df_val.source_tif.tolist() + test_images
+
+    df_train = df_train[~df_train.source_tif.isin(test_val_images)].reset_index(drop=True)
 
     logger.info("Splitting dataset")
 
-    cloudy_df = df[df.cluster_label == 1]
-    good_df = df[df.cluster_label == 0]
-
-    val_idxes = rng.choice(good_df.index, len(cloudy_df), replace=False)
-
-    df_val = pd.concat([cloudy_df, good_df.loc[val_idxes]]).copy()
-    df_train = good_df[~good_df.index.isin(val_idxes)].copy()
-
     # Log split sizes
-    logger.info("Split sizes -> train: %d, val: %d", len(df_train), len(df_val))
+    logger.info(
+        "Split sizes -> train: %d, val: %d, test: %d", len(df_train), len(df_val), len(df_test)
+    )
     df_train["dataset"] = "train"
     df_val["dataset"] = "val"
     if verbose:
@@ -87,7 +117,10 @@ def create_splits(conf: QualityConfig, verbose: bool = True) -> tuple[pd.DataFra
         logger.info(df_train["cluster_label"].value_counts().sort_index())
         logger.info("Val Class Split")
         logger.info(df_val["cluster_label"].value_counts().sort_index())
-    return df_train, df_val
+        logger.info("Test Class Split")
+        logger.info(df_test["cluster_label"].value_counts().sort_index())
+
+    return df_train, df_val, df_test
 
 
 def load_tif(pth: Path, config: QualityConfig) -> np.ndarray:
@@ -136,21 +169,20 @@ class LowQualityDataset(Dataset):
         self.df = df.reset_index(drop=True)
         self.conf = conf
         self.train = train
+        self.rng = np.random.default_rng(self.conf.seed)
+        self.rng_t = torch.Generator()
+        self.rng_t.manual_seed(self.conf.seed)
 
         # Create normaliztion
         assert conf.normalization_path is not None
         self.norm_stats = load_normalization(conf.normalization_path, conf.bands)
-        scale = np.array([self.norm_stats.max_pixel_value] * self.conf.bands.num_channels())
-        st = StandardScaler(with_mean=False)
+
         if self.norm_stats.power_scale:
-            pt = PowerTransformer(standardize=False)
-            pt.lambdas_ = self.norm_stats.lambdas
-            max_value = pt.transform(scale[None])[0]
-            st.scale_ = max_value
-            self.norm = Pipeline([("PowerTransformer", pt), ("StandardScaler", st)])
+            self.norm = PowerTransformTorch(
+                self.norm_stats.lambdas.tolist(), self.norm_stats.max_pixel_value
+            )
         else:
-            st.scale_ = scale
-            self.norm = Pipeline([("StandardScaler", st)])
+            self.norm = ScaleNormalization(self.norm_stats.max_pixel_value)
 
         if train:
             self.resize_aug = K.RandomResizedCrop(
@@ -163,26 +195,85 @@ class LowQualityDataset(Dataset):
                 size=(conf.val_size, conf.val_size), resample=Resample.BICUBIC, antialias=True
             )
 
+        self.base_augs = K.AugmentationSequential(self.norm, self.resize_aug, data_keys=None)
+
+        foggy = K.AugmentationSequential(
+            K.RandomSharpness(sharpness=5.0, p=1.0),
+            K.RandomPosterize(
+                p=1.0,
+                bits=(6, 7),
+            ),
+            ScaledRandomGaussianNoise(
+                std=0.05,
+                p=1.0,
+            ),
+            K.RandomPlasmaBrightness(p=1.0, intensity=(0.05, 0.1)),
+            RandomPlasmaFog(
+                p=1.0,
+                fog_intensity=(0.8, 1.0),
+                roughness=(0.5, 0.6),
+            ),
+        )
+
+        foggy_color = K.AugmentationSequential(
+            K.RandomPosterize(
+                p=1.0,
+                bits=(7, 7),
+            ),
+            RandomPlasmaFog(
+                p=1.0,
+                fog_intensity=(0.2, 0.2),
+                roughness=(0.5, 0.7),
+            ),
+            K.RandomPlasmaBrightness(p=1.0, intensity=(0.6, 0.6), roughness=(0.5, 0.5)),
+        )
+
+        hazy_blur = K.AugmentationSequential(
+            make_blur_aug(),
+            RandomPlasmaFog(
+                p=1.0,
+                fog_intensity=(1.0, 1.0),
+                roughness=(0.5, 0.6),
+            ),
+        )
+
+        iso_noise = K.AugmentationSequential(
+            make_blur_aug(),
+            K.RandomGaussianNoise(
+                std=0.15,
+                p=1.0,
+            ),
+        )
+
+        misalgined = K.AugmentationSequential(
+            MisalignedImage(
+                p=1.0,
+                angle_deg=(-35.0, 35.0),
+                edge_shift=(-10, 10),
+                offset=(-20, 20),
+                border_crop=30,
+            ),
+            K.Resize(
+                size=(conf.val_size, conf.val_size), resample=Resample.BICUBIC, antialias=True
+            ),
+        )
+
+        self.perturb_augs = K.AugmentationSequential(
+            misalgined,
+            iso_noise,
+            hazy_blur,
+            foggy,
+            foggy_color,
+            random_apply=1,
+            data_keys=None,
+        )
+
         augs: list[Any] = []
         if train:
             augs += [
                 K.RandomVerticalFlip(p=self.conf.vertical_flip_p),
                 K.RandomHorizontalFlip(p=self.conf.horizontal_flip_p),
                 K.RandomRotation90((0, 3), p=conf.rotation_p),
-                K.RandomBrightness(
-                    brightness=(max(0, 1 - conf.brightness), 1 + conf.brightness),
-                    p=conf.brightness_p,
-                ),
-                K.RandomContrast(
-                    contrast=(max(0, 1 - conf.contrast), 1 + conf.contrast),
-                    p=conf.contrast_p,
-                ),
-                K.RandomSharpness(sharpness=self.conf.sharpness, p=self.conf.sharpness_p),
-                RandomChannelShift(
-                    shift_limit=self.conf.channel_shift_limit,
-                    num_channels=conf.bands.num_channels(),
-                    p=self.conf.channel_shift_p,
-                ),
             ]
 
         augs += [
@@ -209,22 +300,22 @@ class LowQualityDataset(Dataset):
             raise FileNotFoundError(tif_path)
 
         data = load_tif(tif_path, self.conf)
-        shp = data.shape
-        norm_data = self.norm.transform(data.reshape(len(data), -1).T).T.reshape(shp)
+
+        # Normalize to 0-1 and resize
+        pixels = torch.from_numpy(data.astype(np.float32))
+        pixels = self.base_augs({"image": pixels})["image"]
 
         if self.train:
-            norm_data = self.perturb_image(norm_data)
+            if self.rng.random() > 0.5:
+                pixels = self.perturb_augs({"image": pixels})["image"]
+                label = torch.tensor(1, dtype=torch.long)
+            else:
+                label = torch.tensor(row["cluster_label"], dtype=torch.long)
+        else:
+            label = torch.tensor(row["cluster_label"], dtype=torch.long)
 
-        pixels = torch.from_numpy(norm_data.astype(np.float32))
-        # Resize can create negative values :(
-        pixels = self.resize_aug(pixels).clip(0, self.norm_stats.max_pixel_value)
-        # Some Kornia per-sample augs (e.g., RandomResizedCrop) can return (1,C,H,W) for a 3D input.
-        # Squeeze a possible leading singleton batch dim so DataLoader collates to (B,C,H,W) and
-        # not (B,1,C,H,W).
         if pixels.ndim == 4 and pixels.shape[0] == 1:
             pixels = pixels.squeeze(0)
-
-        label = torch.tensor(row["label_idx"], dtype=torch.long)
 
         return {
             "image": pixels,
@@ -232,9 +323,6 @@ class LowQualityDataset(Dataset):
             "source_tif": str(tif_path),
             "region": row["region"],
         }
-
-    def perturb_image(self, data: np.ndarray) -> np.ndarray:
-        return data
 
 
 # -------------------------------------------------
@@ -266,12 +354,16 @@ class LowQualityDataModule(LightningDataModule):
         # verify files exist & readable
         if not self.conf.data.exists():
             raise FileNotFoundError(self.conf.data)
+        if not self.conf.test_data.exists():
+            raise FileNotFoundError(self.conf.test_data)
+        if not self.conf.val_data.exists():
+            raise FileNotFoundError(self.conf.val_data)
         if self.conf.normalization_path is not None and not self.conf.normalization_path.exists():
             raise FileNotFoundError(self.conf.normalization_path)
 
     def setup(self, stage: str | None = None) -> None:
         if self.train_ds is None or self.val_ds is None or self.test_ds is None:
-            df_train, df_val = create_splits(self.conf)
+            df_train, df_val, df_test = create_splits(self.conf)
 
             # build datasets
             self.train_ds = LowQualityDataset(
@@ -280,12 +372,20 @@ class LowQualityDataModule(LightningDataModule):
                 train=True,
             )
             self.train_aug = self.train_ds.transforms
+
             self.val_ds = LowQualityDataset(
                 df=df_val,
                 conf=self.conf,
                 train=False,
             )
             self.val_aug = self.val_ds.transforms
+
+            self.test_ds = LowQualityDataset(
+                df=df_test,
+                conf=self.conf,
+                train=False,
+            )
+            self.test_aug = self.test_ds.transforms
 
     # -------- DataLoaders --------
     def train_dataloader(self):
@@ -304,6 +404,17 @@ class LowQualityDataModule(LightningDataModule):
         assert self.val_ds is not None
         return DataLoader(
             self.val_ds,
+            batch_size=self.conf.batch_size,
+            shuffle=False,
+            num_workers=num_workers(self.conf),
+            pin_memory=self.conf.pin_memory,
+            persistent_workers=self.conf.persistent_workers,
+        )
+
+    def test_dataloader(self):
+        assert self.test_ds is not None
+        return DataLoader(
+            self.test_ds,
             batch_size=self.conf.batch_size,
             shuffle=False,
             num_workers=num_workers(self.conf),

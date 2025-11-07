@@ -12,11 +12,10 @@ from omegaconf import DictConfig, OmegaConf
 from rich import get_console
 from rich.table import Column, Table
 
-from estuary.clay.data import ClayEstuaryDataModule
-from estuary.model.config import EstuaryConfig, ModelType
-from estuary.model.data import EstuaryDataModule, calc_class_weights
-from estuary.model.module import EstuaryModule
-from estuary.util.logging import setup_logger
+from estuary.low_quality.config import QualityConfig
+from estuary.low_quality.data import LowQualityDataModule
+from estuary.low_quality.module import LowQualityModule
+from estuary.util.my_logging import setup_logger
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +24,12 @@ def main() -> None:
     """
     trains model
     """
-    base_conf = OmegaConf.structured(EstuaryConfig)
+    base_conf = OmegaConf.structured(QualityConfig)
     cli_conf = OmegaConf.from_cli()
     # cli_conf = OmegaConf.load("train.yaml")
     assert isinstance(cli_conf, DictConfig)
 
-    conf: EstuaryConfig = OmegaConf.merge(base_conf, cli_conf)  # type: ignore
+    conf: QualityConfig = OmegaConf.merge(base_conf, cli_conf)  # type: ignore
 
     seed_everything(conf.seed, workers=True)
 
@@ -56,16 +55,9 @@ def main() -> None:
     logger.info(f"Saving results to {model_dir}")
     logger.info(f"Training classification model with classes {conf.classes}")
 
-    # Add dynamic class weights
-    if conf.use_class_weights:
-        conf.class_weights = calc_class_weights(conf)
-
     # Load model and data
-    model = EstuaryModule(conf)
-    if conf.model_type == ModelType.CLAY:
-        datamodule = ClayEstuaryDataModule(conf)
-    else:
-        datamodule = EstuaryDataModule(conf)
+    model = LowQualityModule(conf)
+    datamodule = LowQualityDataModule(conf)
 
     # wandb_logger = WandbLogger(log_model="all", project=conf.project, save_dir=model_dir)
     tensorboard_logger = TensorBoardLogger(model_dir)

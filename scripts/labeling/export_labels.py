@@ -8,6 +8,7 @@ annotation is used. Assumes tasks were created with `meta.source_tif`.
 """
 
 import os
+import shutil
 from pathlib import Path
 
 import click
@@ -40,7 +41,7 @@ def extract_label(task: dict) -> str | None:
     "-rd",
     "--regions-dir",
     type=click.Path(file_okay=False, resolve_path=True, path_type=Path),
-    required=True,
+    required=False,
     help="Directory under which region geojsons are stored.",
 )
 @click.option(
@@ -52,13 +53,17 @@ def extract_label(task: dict) -> str | None:
     show_default=True,
     help="Label Studio base URL.",
 )
-def main(labeling_dir: Path, out: Path, regions_dir: Path, ls_url: str):
+def main(labeling_dir: Path, out: Path, regions_dir: Path | None, ls_url: str):
     # Must set env key LABEL_STUDIO_API_KEY
     ls = LabelStudio(base_url=ls_url)
 
     rows = []
     dirs = list(labeling_dir.iterdir())
-    valid_regions = set(int(p.stem) for p in regions_dir.glob("*.geojson"))
+    if regions_dir is not None:
+        valid_regions = set(int(p.stem) for p in regions_dir.glob("*.geojson"))
+    else:
+        valid_regions = None
+
     for pdir in tqdm(dirs):
         if not pdir.is_dir():
             continue
@@ -78,26 +83,44 @@ def main(labeling_dir: Path, out: Path, regions_dir: Path, ls_url: str):
             # meta may be stored at top-level or nested under data
             meta = task.get("data", {}).get("meta") or {}
             region = int(meta["region"])
-            if int(region) not in valid_regions:
+            if valid_regions is not None and int(region) not in valid_regions:
                 continue
             source_tif = Path(meta["source_tif"])
+            acquired = parse_dt_from_pth(source_tif)
             instrument = "skysat" if "skysat" in str(source_tif) else source_tif.parents[5].name
 
-            # We are missing some SkySat tifs but have saved images for these. Allow these.
-            # Don't allow missing dove as we need these for training/inference.
-            if instrument != "skysat" and not source_tif.exists():
-                print(f"{source_tif} DOESNT EXIST. Skipping...")
+            if instrument == "skysat" or source_tif.exists():
+                rows.append(
+                    {
+                        "region": region,
+                        "source_tif": source_tif,
+                        "label": label,
+                        "acquired": acquired,
+                        "instrument": instrument,
+                    }
+                )
                 continue
-            acquired = parse_dt_from_pth(source_tif)
-            rows.append(
-                {
-                    "region": region,
-                    "source_tif": source_tif,
-                    "label": label,
-                    "acquired": acquired,
-                    "instrument": instrument,
-                }
-            )
+
+            possible_paths = [
+                Path(str(source_tif).replace("ca_all", "low_quality")),
+                Path(str(source_tif).replace("/superdove", "/low_quality/superdove")),
+                Path(str(source_tif).replace("/dove", "/low_quality/dove")),
+            ]
+
+            for pp in possible_paths:
+                if pp.exists():
+                    shutil.copy(pp, source_tif)
+
+                    rows.append(
+                        {
+                            "region": region,
+                            "source_tif": source_tif,
+                            "label": label,
+                            "acquired": acquired,
+                            "instrument": instrument,
+                        }
+                    )
+                    break
 
     if not rows:
         click.echo("No labels extracted.")

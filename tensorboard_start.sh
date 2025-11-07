@@ -1,6 +1,6 @@
 #!/bin/bash
 
 uv run --env-file .env tensorboard \
-    --logdir /Users/kyledorman/data/results/estuary/train \
+    --logdir /Users/kyledorman/data/results/estuary_quality/train \
     --port 6006 \
     ;

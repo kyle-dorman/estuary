@@ -16,7 +16,7 @@ from estuary.clay.data import ClayEstuaryDataModule
 from estuary.model.config import EstuaryConfig, ModelType
 from estuary.model.data import EstuaryDataModule, calc_class_weights
 from estuary.model.module import EstuaryModule
-from estuary.util.logging import setup_logger
+from estuary.util.my_logging import setup_logger
 
 logger = logging.getLogger(__name__)
 

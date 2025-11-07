@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 @click.option("-l", "--labels-path", type=click.Path(exists=True, path_type=Path), required=True)
 @click.option("-s", "--save-path", type=click.Path(exists=False, path_type=Path), required=True)
 @click.option("-m", "--max-raw-pixel-value", type=int, default=7e3)
-@click.option("-c", "--min_count", type=int, default=10)
+@click.option("-c", "--min-count", type=int, default=100)
 @click.option("--max-std", type=float, default=3.0)
 @click.option("--power-scale", is_flag=True)
 @click.option("--stride", type=int, default=10)
@@ -40,7 +40,6 @@ def main(
     save_path.mkdir(exist_ok=True, parents=True)
 
     labels = pd.read_csv(labels_path)
-    labels = labels[labels.label != "unsure"]
 
     rng = np.random.default_rng(seed=42)
 
@@ -78,7 +77,7 @@ def main(
         all_counts[i] /= min_i
 
     # Convert counts back to ints
-    all_counts = np.ceil(all_counts).astype(np.int32)
+    all_counts = np.floor(all_counts).astype(np.int32)
 
     # Save plots of the before/after normalization per channel
     sns.set_theme()

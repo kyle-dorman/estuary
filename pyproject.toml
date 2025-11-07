@@ -43,6 +43,7 @@ dependencies = [
     "shapely",
     "timm>=1.0.19",
     "torch>=2.7.1",
+    "torch-tb-profiler>=0.4.3",
     "torchmetrics>=1.8.0",
     "torchvision>=0.22.1",
     "tqdm",

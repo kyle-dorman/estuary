@@ -5,6 +5,7 @@ import torch
 from lightning.pytorch import LightningModule
 from lightning.pytorch.loggers import TensorBoardLogger
 from matplotlib import pyplot as plt
+from timm.layers import trunc_normal_
 from torch import nn, optim
 from torch.optim.lr_scheduler import CosineAnnealingLR, SequentialLR
 from torchmetrics import MetricCollection
@@ -19,11 +20,54 @@ from torchvision.utils import make_grid
 
 from estuary.low_quality.config import QualityConfig
 from estuary.low_quality.timm_model import TimmModel
+from estuary.model.module import EstuaryModule
 from estuary.util.data import load_normalization
 from estuary.util.nn import FocalLoss
 from estuary.util.transforms import contrast_stretch_torch
 
 logger = logging.getLogger(__name__)
+
+
+def _init_weights(module: nn.Module, head_init_scale: float = 1.0) -> None:
+    """Initialize model weights.
+
+    Args:
+        module: Module to initialize.
+        head_init_scale: Scale factor for head initialization.
+    """
+    if isinstance(module, nn.Conv2d):
+        trunc_normal_(module.weight, std=0.02)
+        if module.bias is not None:
+            nn.init.zeros_(module.bias)
+    elif isinstance(module, nn.Linear):
+        trunc_normal_(module.weight, std=0.02)
+        nn.init.zeros_(module.bias)
+        module.weight.data.mul_(head_init_scale)
+        module.bias.data.mul_(head_init_scale)
+
+
+def load_encorder_from_path(conf: QualityConfig, num_classes: int) -> nn.Module:
+    assert conf.encoder_checkpoint_path is not None
+
+    module = EstuaryModule.load_from_checkpoint(
+        conf.encoder_checkpoint_path, compile=False, drop_path=conf.drop_path, dropout=conf.dropout
+    )
+    model: TimmModel = module.model  # type: ignore
+
+    model.model.reset_classifier(num_classes, conf.global_pool)  # type: ignore
+    for child_name, child_module in model.model.head.named_children():  # type: ignore
+        logger.info(f"Setting weights for {child_name}")
+        _init_weights(child_module)
+
+    if conf.freeze_encoder:
+        head_names = ["head", "classifier"]
+
+        if conf.freeze_encoder:
+            for name, param in model.named_parameters():
+                if not any(k in name for k in head_names):
+                    param.requires_grad = False
+
+    return model  # type: ignore
 
 
 class LowQualityModule(LightningModule):
@@ -37,7 +81,11 @@ class LowQualityModule(LightningModule):
         super().__init__()
         self.save_hyperparameters(conf)
 
-        clf = TimmModel(conf, self.num_classes)
+        if conf.encoder_checkpoint_path is not None:
+            clf = load_encorder_from_path(conf, self.num_classes)
+        else:
+            clf = TimmModel(conf, self.num_classes)
+
         if conf.debug or not conf.compile:
             self.model = clf
         else:
@@ -53,12 +101,15 @@ class LowQualityModule(LightningModule):
         }
         self.train_cm = BinaryConfusionMatrix()
         self.val_cm = BinaryConfusionMatrix()
+        self.test_cm = BinaryConfusionMatrix()
         self.train_ece = BinaryCalibrationError()
         self.val_ece = BinaryCalibrationError()
+        self.test_ece = BinaryCalibrationError()
 
         metrics = MetricCollection(metrics_dict)
         self.train_metrics = metrics.clone(prefix="train/").to(self.device)
         self.val_metrics = metrics.clone(prefix="val/").to(self.device)
+        self.test_metrics = metrics.clone(prefix="test/").to(self.device)
 
         if conf.loss_fn == "ce":
             self.loss_fn = nn.BCEWithLogitsLoss()
@@ -116,6 +167,10 @@ class LowQualityModule(LightningModule):
             metrics = self.train_metrics
             cm = self.train_cm
             ece = self.train_ece
+        elif train_val == "test":
+            metrics = self.test_metrics
+            cm = self.test_cm
+            ece = self.test_ece
         else:
             metrics = self.val_metrics
             cm = self.val_cm
@@ -154,6 +209,10 @@ class LowQualityModule(LightningModule):
             metrics = self.train_metrics
             cm = self.train_cm
             ece = self.train_ece
+        elif train_val == "test":
+            metrics = self.test_metrics
+            cm = self.test_cm
+            ece = self.test_ece
         else:
             metrics = self.val_metrics
             cm = self.val_cm
@@ -183,7 +242,7 @@ class LowQualityModule(LightningModule):
 
         # Log open ECE
         results = ece.compute()
-        self.log_dict({f"{train_val}/ece_open": results}, sync_dist=True)
+        self.log_dict({f"{train_val}/ece_unsure": results}, sync_dist=True)
         ece.reset()
 
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
@@ -205,6 +264,18 @@ class LowQualityModule(LightningModule):
 
     def on_validation_epoch_end(self):
         self.on_step_end("val")
+
+    def test_step(
+        self,
+        batch: dict[str, torch.Tensor],
+        batch_idx: int,
+    ):
+        if batch_idx == 0:
+            self._log_batch_images(batch["image"], split="test", step=self.current_epoch)
+        return self.step("test", batch, batch_idx)
+
+    def on_test_epoch_end(self):
+        self.on_step_end("test")
 
     # ------------------------------------------------------------------
     #  Optimiser + LR schedule

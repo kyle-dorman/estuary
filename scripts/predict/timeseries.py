@@ -73,6 +73,11 @@ def main(labels_path: Path, model_path: Path, save_path: Path | None):
         ca_results_df, labels[["source_tif", "orig_label"]], on="source_tif", how="left"
     )
     ca_results_df["correct"] = ca_results_df.y_true == ca_results_df.y_pred
+
+    print("Results", model_path.parent.parent.name)
+    print("==========================")
+    print(round(ca_results_df["correct"].mean(), 3))
+
     if save_path.exists():
         os.remove(save_path)
     ca_results_df.to_csv(save_path, index=False)

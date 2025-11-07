@@ -19,7 +19,12 @@ from estuary.model.config import (
 )
 from estuary.util.bands import Bands
 from estuary.util.data import cpu_count, load_normalization, parse_dt_from_pth
-from estuary.util.transforms import PowerTransformTorch, RandomChannelShift, ScaleNormalization
+from estuary.util.transforms import (
+    PowerTransformTorch,
+    RandomChannelShift,
+    RandomPlasmaFog,
+    ScaleNormalization,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -203,10 +208,7 @@ class EstuaryDataset(Dataset):
     """Loads PlanetScope SR data and builds a datacube."""
 
     def __init__(
-        self,
-        df: pd.DataFrame,
-        conf: EstuaryConfig,
-        train: bool = False,
+        self, df: pd.DataFrame, conf: EstuaryConfig, train: bool = False, skip_aug: bool = False
     ) -> None:
         """
         Args
@@ -218,6 +220,7 @@ class EstuaryDataset(Dataset):
         self.df = df.reset_index(drop=True)
         self.conf = conf
         self.train = train
+        self.skip_aug = skip_aug
         assert conf.normalization_path is not None
         self.norm_stats = load_normalization(conf.normalization_path, conf.bands)
 
@@ -243,35 +246,138 @@ class EstuaryDataset(Dataset):
             augs.append(ScaleNormalization(self.norm_stats.max_pixel_value))
 
         if train:
+            noise_aug = K.AugmentationSequential(
+                K.RandomBrightness(p=0.0),  # Identity,
+                K.AugmentationSequential(
+                    K.RandomSaltAndPepperNoise(
+                        amount=tuple(self.conf.salt_pepper_amount),  # type: ignore
+                        p=1.0,
+                    ),
+                    K.RandomGaussianNoise(
+                        mean=0.0,
+                        std=self.conf.gauss_std,
+                        p=1.0,
+                    ),
+                    K.RandomRain(
+                        p=1.0,
+                        number_of_drops=self.conf.rain_number_of_drops,
+                        drop_height=self.conf.rain_drop_height,
+                        drop_width=self.conf.rain_drop_width,
+                    ),
+                    K.RandomErasing(p=1.0, scale=self.conf.erasing_scale),
+                    RandomPlasmaFog(
+                        p=1.0,
+                        fog_intensity=self.conf.fog_intensity,
+                        roughness=self.conf.fog_roughness,
+                    ),
+                    K.RandomPlasmaShadow(
+                        p=1.0,
+                        shade_intensity=self.conf.shade_intensity,
+                        shade_quantity=self.conf.shade_quantity,
+                    ),
+                    random_apply=1,
+                ),
+                random_apply=1,
+            )
+
+            illumination = K.AugmentationSequential(
+                K.RandomLinearIllumination(p=1.0, gain=tuple(self.conf.illumination_gain)),  # type: ignore
+                K.RandomLinearCornerIllumination(p=1.0, gain=tuple(self.conf.illumination_gain)),  # type: ignore
+                random_apply=1,
+            )
+
+            if self.conf.bands.num_channels == 3:
+                jiggle = K.ColorJiggle(
+                    brightness=self.conf.brightness,
+                    contrast=self.conf.contrast,
+                    p=1.0,
+                )
+            else:
+                jiggle = K.AugmentationSequential(
+                    K.RandomBrightness(
+                        brightness=(1 - self.conf.brightness, 1 + self.conf.brightness), p=1.0
+                    ),
+                    K.RandomContrast(
+                        contrast=(1 - self.conf.contrast, 1 + self.conf.contrast), p=1.0
+                    ),
+                )
+
+            if self.conf.bands.num_channels == 3:
+                channel_shift = RandomChannelShift(
+                    shift_limit=self.conf.channel_shift_limit,
+                    num_channels=conf.bands.num_channels(),
+                    p=1.0,
+                )
+            else:
+                channel_shift = K.RandomRGBShift(
+                    r_shift_limit=self.conf.channel_shift_limit,
+                    g_shift_limit=self.conf.channel_shift_limit,
+                    b_shift_limit=self.conf.channel_shift_limit,
+                    p=1.0,
+                )
+
+            color_augs = K.AugmentationSequential(
+                K.RandomBrightness(p=0.0),  # Identity,
+                K.AugmentationSequential(
+                    jiggle,
+                    K.RandomPlasmaContrast(p=1.0),
+                    K.RandomPlasmaBrightness(p=1.0, intensity=self.conf.plasma_brightness),
+                    K.RandomSharpness(sharpness=self.conf.sharpness, p=1.0),
+                    channel_shift,
+                    K.RandomPlanckianJitter(
+                        p=1.0,
+                    ),
+                    illumination,
+                    K.RandomPosterize(
+                        p=1.0,
+                        bits=(self.conf.posterize_bits, 7),
+                    ),
+                    random_apply=(1, 2),
+                ),
+                random_apply=1,
+            )
+
+            blur_augs = K.AugmentationSequential(
+                K.RandomBrightness(p=0.0),  # Identity,
+                K.AugmentationSequential(
+                    K.RandomGaussianBlur(
+                        kernel_size=conf.blur_kernel_size,
+                        sigma=conf.blur_sigma,
+                        p=1.0,
+                    ),
+                    K.RandomMotionBlur(
+                        kernel_size=self.conf.blur_kernel_size,
+                        angle=35,
+                        direction=0.5,
+                        border_type=2,
+                        p=1.0,
+                    ),
+                    K.RandomMedianBlur(
+                        kernel_size=(
+                            self.conf.median_blur_kernel_size,
+                            self.conf.median_blur_kernel_size,
+                        ),
+                        p=1.0,
+                    ),
+                    K.RandomBoxBlur(
+                        kernel_size=(
+                            self.conf.box_blur_kernel_size,
+                            self.conf.box_blur_kernel_size,
+                        ),
+                        p=1.0,
+                    ),
+                    random_apply=1,
+                ),
+                random_apply=1,
+            )
+
             augs += [
                 K.RandomVerticalFlip(p=self.conf.vertical_flip_p),
                 K.RandomHorizontalFlip(p=self.conf.horizontal_flip_p),
                 K.RandomRotation90((0, 3), p=conf.rotation_p),
-                K.RandomBrightness(
-                    brightness=(max(0, 1 - conf.brightness), 1 + conf.brightness),
-                    p=conf.brightness_p,
-                ),
-                K.RandomContrast(
-                    contrast=(max(0, 1 - conf.contrast), 1 + conf.contrast),
-                    p=conf.contrast_p,
-                ),
-                K.RandomSharpness(sharpness=self.conf.sharpness, p=self.conf.sharpness_p),
-                K.RandomGaussianNoise(
-                    mean=self.conf.gauss_mean,
-                    std=self.conf.gauss_std,
-                    p=self.conf.gauss_p,
-                ),
-                K.RandomGaussianBlur(
-                    kernel_size=conf.blur_kernel_size,
-                    sigma=conf.blur_sigma,
-                    p=conf.blur_p,
-                ),
-                RandomChannelShift(
-                    shift_limit=self.conf.channel_shift_limit,
-                    num_channels=conf.bands.num_channels(),
-                    p=self.conf.channel_shift_p,
-                ),
-                K.RandomErasing(scale=self.conf.erasing_scale, p=self.conf.erasing_p),
+                color_augs,
+                blur_augs,
+                noise_aug,
             ]
 
         augs += [
@@ -301,6 +407,9 @@ class EstuaryDataset(Dataset):
         pixels = torch.from_numpy(data.astype(np.float32))
         # Resize can create negative values :(
         pixels = self.resize_aug(pixels).clip(0, self.norm_stats.max_pixel_value)
+        if not self.skip_aug:
+            pixels = self.transforms({"image": pixels})["image"]
+
         # Some Kornia per-sample augs (e.g., RandomResizedCrop) can return (1,C,H,W) for a 3D input.
         # Squeeze a possible leading singleton batch dim so DataLoader collates to (B,C,H,W) and
         # not (B,1,C,H,W).
@@ -410,59 +519,59 @@ class EstuaryDataModule(LightningDataModule):
             persistent_workers=self.conf.persistent_workers,
         )
 
-    """
-    These two functions are a hack to run augmentation on CPU when the device is apple MPS
-    and on GPU otherwise.
-    """
+    # """
+    # These two functions are a hack to run augmentation on CPU when the device is apple MPS
+    # and on GPU otherwise.
+    # """
 
-    def _aug_batch(
-        self, batch: dict[str, torch.Tensor], dataloader_idx: int
-    ) -> dict[str, torch.Tensor]:
-        if self.trainer:
-            if self.trainer.training:
-                aug = self.train_aug
-            elif self.trainer.validating or self.trainer.sanity_checking:
-                aug = self.val_aug
-            elif self.trainer.testing:
-                aug = self.test_aug
-            elif self.trainer.predicting:
-                aug = self.test_aug
-            else:
-                aug = self.test_aug
+    # def _aug_batch(
+    #     self, batch: dict[str, torch.Tensor], dataloader_idx: int
+    # ) -> dict[str, torch.Tensor]:
+    #     if self.trainer:
+    #         if self.trainer.training:
+    #             aug = self.train_aug
+    #         elif self.trainer.validating or self.trainer.sanity_checking:
+    #             aug = self.val_aug
+    #         elif self.trainer.testing:
+    #             aug = self.test_aug
+    #         elif self.trainer.predicting:
+    #             aug = self.test_aug
+    #         else:
+    #             aug = self.test_aug
 
-            assert aug is not None
-            batch = aug(batch)
-        return batch
+    #         assert aug is not None
+    #         batch = aug(batch)
+    #     return batch
 
-    def on_before_batch_transfer(
-        self, batch: dict[str, torch.Tensor], dataloader_idx: int
-    ) -> dict[str, torch.Tensor]:
-        """Apply batch augmentations to the batch BEFORE it is transferred to the device.
+    # def on_before_batch_transfer(
+    #     self, batch: dict[str, torch.Tensor], dataloader_idx: int
+    # ) -> dict[str, torch.Tensor]:
+    #     """Apply batch augmentations to the batch BEFORE it is transferred to the device.
 
-        Args:
-            batch: A batch of data that needs to be altered or augmented.
-            device: The device
-            dataloader_idx: The index of the dataloader to which the batch belongs.
+    #     Args:
+    #         batch: A batch of data that needs to be altered or augmented.
+    #         device: The device
+    #         dataloader_idx: The index of the dataloader to which the batch belongs.
 
-        Returns:
-            A batch of data.
-        """
-        if self.trainer and torch.backends.mps.is_available():
-            batch = self._aug_batch(batch, dataloader_idx)
-        return batch
+    #     Returns:
+    #         A batch of data.
+    #     """
+    #     if self.trainer and torch.backends.mps.is_available():
+    #         batch = self._aug_batch(batch, dataloader_idx)
+    #     return batch
 
-    def on_after_batch_transfer(
-        self, batch: dict[str, torch.Tensor], dataloader_idx: int
-    ) -> dict[str, torch.Tensor]:
-        """Apply batch augmentations to the batch AFTER it is transferred to the device.
+    # def on_after_batch_transfer(
+    #     self, batch: dict[str, torch.Tensor], dataloader_idx: int
+    # ) -> dict[str, torch.Tensor]:
+    #     """Apply batch augmentations to the batch AFTER it is transferred to the device.
 
-        Args:
-            batch: A batch of data that needs to be altered or augmented.
-            dataloader_idx: The index of the dataloader to which the batch belongs.
+    #     Args:
+    #         batch: A batch of data that needs to be altered or augmented.
+    #         dataloader_idx: The index of the dataloader to which the batch belongs.
 
-        Returns:
-            A batch of data.
-        """
-        if self.trainer and not torch.backends.mps.is_available():
-            batch = self._aug_batch(batch, dataloader_idx)
-        return batch
+    #     Returns:
+    #         A batch of data.
+    #     """
+    #     if self.trainer and not torch.backends.mps.is_available():
+    #         batch = self._aug_batch(batch, dataloader_idx)
+    #     return batch
