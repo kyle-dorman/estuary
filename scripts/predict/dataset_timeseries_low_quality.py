@@ -14,8 +14,8 @@ from sklearn.metrics import (
 )
 from torch.utils.data import DataLoader
 
-from estuary.model.data import EstuaryDataModule, EstuaryDataset, num_workers
-from estuary.model.module import EstuaryModule
+from estuary.low_quality.data import LowQualityDataModule, LowQualityDataset, num_workers
+from estuary.low_quality.module import LowQualityModule
 
 
 def main():
@@ -23,15 +23,21 @@ def main():
     parser.add_argument("--model-path", type=Path, required=True)
     args = parser.parse_args()
 
-    module = EstuaryModule.load_from_checkpoint(args.model_path, batch_size=1).eval()
+    module = LowQualityModule.load_from_checkpoint(
+        args.model_path,
+        batch_size=1,
+        strict=False,
+    ).eval()
     module = module.eval()
 
-    dm = EstuaryDataModule(module.conf)
+    dm = LowQualityDataModule(module.conf)
     dm.prepare_data()
     dm.setup()
 
+    assert dm.val_aug is not None
+
     dfs = pd.concat([dm.train_ds.df, dm.val_ds.df, dm.test_ds.df], ignore_index=True)  # type: ignore
-    ds = EstuaryDataset(
+    ds = LowQualityDataset(
         df=dfs,
         conf=module.conf,
         train=False,
@@ -56,7 +62,7 @@ def main():
             dataset = "val"
         else:
             dataset = "test"
-
+        batch = dm.val_aug(batch)
         for k in batch.keys():
             if isinstance(batch[k], list):
                 continue
@@ -75,12 +81,7 @@ def main():
             )
 
     results_df = pd.DataFrame(results)
-    results_df = pd.merge(
-        results_df,
-        ds.df,
-        on=["source_tif", "dataset"],
-        how="left",
-    )
+    results_df = pd.merge(results_df, ds.df, on=["source_tif", "dataset"], how="left")
 
     thresholds = np.linspace(0, 1, 101)  # e.g., 0.00, 0.01, ..., 1.00
     scores = []

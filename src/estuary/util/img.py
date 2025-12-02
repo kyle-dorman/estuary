@@ -5,7 +5,7 @@ import rasterio
 from numpy.ma.core import MaskedArray
 from PIL import Image, ImageDraw, ImageFont
 
-from estuary.util.constants import FALSE_COLOR_4, FALSE_COLOR_8
+from estuary.util.constants import FALSE_COLOR_4, FALSE_COLOR_8, RGB_4, RGB_8
 
 
 def contrast_stretch(
@@ -91,6 +91,18 @@ def normalized_image_3_channel(
 
 def false_color(data: np.ndarray, nodata: np.ndarray):
     channels = FALSE_COLOR_4 if len(data) == 4 else FALSE_COLOR_8
+    img = normalized_image_3_channel(data, nodata, channels).transpose((1, 2, 0))
+
+    k = 1.5
+    img = np.tanh(k * img) / np.tanh(k)
+
+    img = np.array(img * 255, dtype=np.uint8)
+
+    return img
+
+
+def true_color(data: np.ndarray, nodata: np.ndarray):
+    channels = RGB_4 if len(data) == 4 else RGB_8
     img = normalized_image_3_channel(data, nodata, channels).transpose((1, 2, 0))
 
     k = 1.5

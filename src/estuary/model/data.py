@@ -21,9 +21,9 @@ from estuary.util.bands import Bands
 from estuary.util.data import cpu_count, load_normalization, parse_dt_from_pth
 from estuary.util.transforms import (
     PowerTransformTorch,
-    RandomChannelShift,
-    RandomPlasmaFog,
     ScaleNormalization,
+    basic_train_augs,
+    unsure_train_augs,
 )
 
 logger = logging.getLogger(__name__)
@@ -207,9 +207,7 @@ def load_tif(pth: Path, config: EstuaryConfig) -> tuple[np.ndarray, tuple[float,
 class EstuaryDataset(Dataset):
     """Loads PlanetScope SR data and builds a datacube."""
 
-    def __init__(
-        self, df: pd.DataFrame, conf: EstuaryConfig, train: bool = False, skip_aug: bool = False
-    ) -> None:
+    def __init__(self, df: pd.DataFrame, conf: EstuaryConfig, train: bool = False) -> None:
         """
         Args
         ----
@@ -220,14 +218,13 @@ class EstuaryDataset(Dataset):
         self.df = df.reset_index(drop=True)
         self.conf = conf
         self.train = train
-        self.skip_aug = skip_aug
         assert conf.normalization_path is not None
         self.norm_stats = load_normalization(conf.normalization_path, conf.bands)
 
         if train:
             self.resize_aug = K.RandomResizedCrop(
                 (self.conf.train_size, self.conf.train_size),
-                scale=self.conf.scale,
+                scale=self.conf.aug.scale,
                 resample=Resample.BICUBIC,
             )
         else:
@@ -235,156 +232,30 @@ class EstuaryDataset(Dataset):
                 size=(conf.val_size, conf.val_size), resample=Resample.BICUBIC, antialias=True
             )
 
-        augs: list[Any] = []
         if self.norm_stats.power_scale:
-            augs.append(
-                PowerTransformTorch(
-                    self.norm_stats.lambdas.tolist(), self.norm_stats.max_pixel_value
-                )
+            self.scale_aug = PowerTransformTorch(
+                self.norm_stats.lambdas.tolist(), self.norm_stats.max_pixel_value
             )
         else:
-            augs.append(ScaleNormalization(self.norm_stats.max_pixel_value))
+            self.scale_aug = ScaleNormalization(self.norm_stats.max_pixel_value)
 
-        if train:
-            noise_aug = K.AugmentationSequential(
-                K.RandomBrightness(p=0.0),  # Identity,
-                K.AugmentationSequential(
-                    K.RandomSaltAndPepperNoise(
-                        amount=tuple(self.conf.salt_pepper_amount),  # type: ignore
-                        p=1.0,
-                    ),
-                    K.RandomGaussianNoise(
-                        mean=0.0,
-                        std=self.conf.gauss_std,
-                        p=1.0,
-                    ),
-                    K.RandomRain(
-                        p=1.0,
-                        number_of_drops=self.conf.rain_number_of_drops,
-                        drop_height=self.conf.rain_drop_height,
-                        drop_width=self.conf.rain_drop_width,
-                    ),
-                    K.RandomErasing(p=1.0, scale=self.conf.erasing_scale),
-                    RandomPlasmaFog(
-                        p=1.0,
-                        fog_intensity=self.conf.fog_intensity,
-                        roughness=self.conf.fog_roughness,
-                    ),
-                    K.RandomPlasmaShadow(
-                        p=1.0,
-                        shade_intensity=self.conf.shade_intensity,
-                        shade_quantity=self.conf.shade_quantity,
-                    ),
-                    random_apply=1,
-                ),
-                random_apply=1,
+        self.scale_resize = K.AugmentationSequential(
+            self.resize_aug, self.scale_aug, data_keys=None
+        )
+
+        if self.train:
+            self._confident_tranfroms = K.AugmentationSequential(
+                *basic_train_augs(self.conf.aug, self.conf.bands), data_keys=None
+            )
+            self._unsure_transforms = K.AugmentationSequential(
+                *unsure_train_augs(self.conf.aug, self.conf.bands), data_keys=None
             )
 
-            illumination = K.AugmentationSequential(
-                K.RandomLinearIllumination(p=1.0, gain=tuple(self.conf.illumination_gain)),  # type: ignore
-                K.RandomLinearCornerIllumination(p=1.0, gain=tuple(self.conf.illumination_gain)),  # type: ignore
-                random_apply=1,
-            )
-
-            if self.conf.bands.num_channels == 3:
-                jiggle = K.ColorJiggle(
-                    brightness=self.conf.brightness,
-                    contrast=self.conf.contrast,
-                    p=1.0,
-                )
-            else:
-                jiggle = K.AugmentationSequential(
-                    K.RandomBrightness(
-                        brightness=(1 - self.conf.brightness, 1 + self.conf.brightness), p=1.0
-                    ),
-                    K.RandomContrast(
-                        contrast=(1 - self.conf.contrast, 1 + self.conf.contrast), p=1.0
-                    ),
-                )
-
-            if self.conf.bands.num_channels == 3:
-                channel_shift = RandomChannelShift(
-                    shift_limit=self.conf.channel_shift_limit,
-                    num_channels=conf.bands.num_channels(),
-                    p=1.0,
-                )
-            else:
-                channel_shift = K.RandomRGBShift(
-                    r_shift_limit=self.conf.channel_shift_limit,
-                    g_shift_limit=self.conf.channel_shift_limit,
-                    b_shift_limit=self.conf.channel_shift_limit,
-                    p=1.0,
-                )
-
-            color_augs = K.AugmentationSequential(
-                K.RandomBrightness(p=0.0),  # Identity,
-                K.AugmentationSequential(
-                    jiggle,
-                    K.RandomPlasmaContrast(p=1.0),
-                    K.RandomPlasmaBrightness(p=1.0, intensity=self.conf.plasma_brightness),
-                    K.RandomSharpness(sharpness=self.conf.sharpness, p=1.0),
-                    channel_shift,
-                    K.RandomPlanckianJitter(
-                        p=1.0,
-                    ),
-                    illumination,
-                    K.RandomPosterize(
-                        p=1.0,
-                        bits=(self.conf.posterize_bits, 7),
-                    ),
-                    random_apply=(1, 2),
-                ),
-                random_apply=1,
-            )
-
-            blur_augs = K.AugmentationSequential(
-                K.RandomBrightness(p=0.0),  # Identity,
-                K.AugmentationSequential(
-                    K.RandomGaussianBlur(
-                        kernel_size=conf.blur_kernel_size,
-                        sigma=conf.blur_sigma,
-                        p=1.0,
-                    ),
-                    K.RandomMotionBlur(
-                        kernel_size=self.conf.blur_kernel_size,
-                        angle=35,
-                        direction=0.5,
-                        border_type=2,
-                        p=1.0,
-                    ),
-                    K.RandomMedianBlur(
-                        kernel_size=(
-                            self.conf.median_blur_kernel_size,
-                            self.conf.median_blur_kernel_size,
-                        ),
-                        p=1.0,
-                    ),
-                    K.RandomBoxBlur(
-                        kernel_size=(
-                            self.conf.box_blur_kernel_size,
-                            self.conf.box_blur_kernel_size,
-                        ),
-                        p=1.0,
-                    ),
-                    random_apply=1,
-                ),
-                random_apply=1,
-            )
-
-            augs += [
-                K.RandomVerticalFlip(p=self.conf.vertical_flip_p),
-                K.RandomHorizontalFlip(p=self.conf.horizontal_flip_p),
-                K.RandomRotation90((0, 3), p=conf.rotation_p),
-                color_augs,
-                blur_augs,
-                noise_aug,
-            ]
-
-        augs += [
+        self.transforms = K.AugmentationSequential(
             K.Resize(size=(conf.val_size, conf.val_size)),
             K.Normalize(mean=self.norm_stats.mean.tolist(), std=self.norm_stats.std.tolist()),
-        ]
-        self.transforms = K.AugmentationSequential(*augs, data_keys=None)
+            data_keys=None,
+        )
 
     def denormalize(self, x: torch.Tensor) -> torch.Tensor:
         return K.Denormalize(mean=self.norm_stats.mean.tolist(), std=self.norm_stats.std.tolist())(
@@ -405,10 +276,20 @@ class EstuaryDataset(Dataset):
 
         data, _ = load_tif(tif_path, self.conf)
         pixels = torch.from_numpy(data.astype(np.float32))
-        # Resize can create negative values :(
-        pixels = self.resize_aug(pixels).clip(0, self.norm_stats.max_pixel_value)
-        if not self.skip_aug:
-            pixels = self.transforms({"image": pixels})["image"]
+
+        pixels = self.scale_resize({"image": pixels})["image"]
+        if self.train:
+            if self.conf.aug_level == "high":
+                pixels = self._confident_tranfroms({"image": pixels})["image"]
+            elif self.conf.aug_level == "low":
+                pixels = self._unsure_transforms({"image": pixels})["image"]
+            else:
+                if row["source"] == "low_quality":
+                    pixels = self._unsure_transforms({"image": pixels})["image"]
+                else:
+                    pixels = self._confident_tranfroms({"image": pixels})["image"]
+
+        pixels = self.transforms({"image": pixels})["image"]
 
         # Some Kornia per-sample augs (e.g., RandomResizedCrop) can return (1,C,H,W) for a 3D input.
         # Squeeze a possible leading singleton batch dim so DataLoader collates to (B,C,H,W) and
@@ -448,9 +329,9 @@ class EstuaryDataModule(LightningDataModule):
         self.val_ds: Dataset | None = None
         self.test_ds: Dataset | None = None
 
-        self.train_aug: K.AugmentationSequential | None = None
-        self.val_aug: K.AugmentationSequential | None = None
-        self.test_aug: K.AugmentationSequential | None = None
+        # self.train_aug: K.AugmentationSequential | None = None
+        # self.val_aug: K.AugmentationSequential | None = None
+        # self.test_aug: K.AugmentationSequential | None = None
 
     # -------- Lightning hooks --------
     def prepare_data(self) -> None:
@@ -470,19 +351,16 @@ class EstuaryDataModule(LightningDataModule):
                 conf=self.conf,
                 train=True,
             )
-            self.train_aug = self.train_ds.transforms
             self.val_ds = EstuaryDataset(
                 df=df_val,
                 conf=self.conf,
                 train=False,
             )
-            self.val_aug = self.val_ds.transforms
             self.test_ds = EstuaryDataset(
                 df=df_test,
                 conf=self.conf,
                 train=False,
             )
-            self.test_aug = self.test_ds.transforms
 
     # -------- DataLoaders --------
     def train_dataloader(self):

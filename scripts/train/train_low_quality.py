@@ -4,7 +4,6 @@ import time
 import traceback
 from pathlib import Path
 
-import torch
 from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
@@ -13,7 +12,7 @@ from rich import get_console
 from rich.table import Column, Table
 
 from estuary.low_quality.config import QualityConfig
-from estuary.low_quality.data import LowQualityDataModule
+from estuary.low_quality.data import LowQualityDataModule, calc_class_weights
 from estuary.low_quality.module import LowQualityModule
 from estuary.util.my_logging import setup_logger
 
@@ -55,8 +54,22 @@ def main() -> None:
     logger.info(f"Saving results to {model_dir}")
     logger.info(f"Training classification model with classes {conf.classes}")
 
-    # Load model and data
-    model = LowQualityModule(conf)
+    # Add dynamic class weights
+    if conf.use_class_weights:
+        conf.class_weights = calc_class_weights(conf)
+
+    if "checkpoint_path" in cli_conf:
+        checkpoint = cli_conf.pop("checkpoint_path")
+        model = LowQualityModule.load_from_checkpoint(
+            checkpoint_path=checkpoint,
+            strict=False,
+            **cli_conf,  # type: ignore
+        )
+        conf = model.conf
+    else:
+        # Load model and data
+        model = LowQualityModule(conf)
+
     datamodule = LowQualityDataModule(conf)
 
     # wandb_logger = WandbLogger(log_model="all", project=conf.project, save_dir=model_dir)
@@ -82,8 +95,8 @@ def main() -> None:
     assert len(conf.devices) > 0
     devices = list(map(int, conf.devices)) if len(conf.devices) > 1 else conf.devices[0]
 
-    if torch.backends.mps.is_available() and conf.accelerator in ["mps", "auto"]:
-        torch._dynamo.config.suppress_errors = True
+    # if torch.backends.mps.is_available() and conf.accelerator in ["mps", "auto"]:
+    #     torch._dynamo.config.suppress_errors = True
 
     trainer = Trainer(
         max_epochs=conf.epochs,
@@ -102,7 +115,7 @@ def main() -> None:
     )
 
     if trainer.is_global_zero:
-        # Save configs – full + diff
+        # Save configs - full + diff
         OmegaConf.save(config=cli_conf, f=model_dir / "cli_diff.yaml")
         OmegaConf.save(config=conf, f=model_dir / "conf_full.yaml")
         # trainer.world_size available after instantiation

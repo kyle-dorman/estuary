@@ -4,7 +4,6 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-import cv2
 import pandas as pd
 import rasterio
 from rasterio.env import Env
@@ -95,52 +94,51 @@ def run_one(region: str, year: int, month: int, dove: str) -> list[dict[str, Any
                     # Means across spatial dims -> shape (udm_count,)
                     udm_means = udm.mean(axis=(1, 2))
 
-                # --- Spectral TIFF stats (per-band mean/std over H,W) ---
-                with rasterio.open(tif_path) as src_tif:
-                    if src_tif.count == 4:
-                        idx = [1, 2, 3, 4]
-                    else:
-                        # superdove 8-band: select 2,4,6,8 as in original
-                        idx = [2, 4, 6, 8]
-                    arr = src_tif.read(indexes=idx, out_dtype="float32")
-                    tif_means = arr.mean(axis=(1, 2))
-                    tif_stds = arr.std(axis=(1, 2))
-                    import numpy as np
+                # # --- Spectral TIFF stats (per-band mean/std over H,W) ---
+                # with rasterio.open(tif_path) as src_tif:
+                #     if src_tif.count == 4:
+                #         idx = [1, 2, 3, 4]
+                #     else:
+                #         # superdove 8-band: select 2,4,6,8 as in original
+                #         idx = [2, 4, 6, 8]
+                #     arr = src_tif.read(indexes=idx, out_dtype="float32")
+                #     tif_means = arr.mean(axis=(1, 2))
+                #     tif_stds = arr.std(axis=(1, 2))
 
-            # arr shape: (B, H, W) with B=4 (RGBNIR selection)
-            vis = arr[0:3]  # B,G,R
-            mean_vis_img = vis.mean(axis=0)  # per-pixel mean across visible bands
-            gray = mean_vis_img.astype("float32")
+            # # arr shape: (B, H, W) with B=4 (RGBNIR selection)
+            # vis = arr[0:3]  # B,G,R
+            # mean_vis_img = vis.mean(axis=0)  # per-pixel mean across visible bands
+            # gray = mean_vis_img.astype("float32")
 
-            # Scene-level percentiles (visible)
-            p90_vis = float(np.percentile(mean_vis_img, 90))
-            p95_vis = float(np.percentile(mean_vis_img, 95))
+            # # Scene-level percentiles (visible)
+            # p90_vis = float(np.percentile(mean_vis_img, 90))
+            # p95_vis = float(np.percentile(mean_vis_img, 95))
 
-            # Scene-adaptive threshold: bright if above median + 1.0 * std
-            m = float(mean_vis_img.mean())
-            s = float(mean_vis_img.std())
-            bright_thresh = m + 1.0 * s
-            bright_frac = float((mean_vis_img > bright_thresh).mean())
+            # # Scene-adaptive threshold: bright if above median + 1.0 * std
+            # m = float(mean_vis_img.mean())
+            # s = float(mean_vis_img.std())
+            # bright_thresh = m + 1.0 * s
+            # bright_frac = float((mean_vis_img > bright_thresh).mean())
 
-            # Low-texture proxy: per-pixel std across visible bands, then fraction below small
-            # threshold
-            std_vis_img = vis.std(axis=0)
-            low_tex_frac = float((std_vis_img < (std_vis_img.mean() * 0.5)).mean())
+            # # Low-texture proxy: per-pixel std across visible bands, then fraction below small
+            # # threshold
+            # std_vis_img = vis.std(axis=0)
+            # low_tex_frac = float((std_vis_img < (std_vis_img.mean() * 0.5)).mean())
 
-            # NIR ratio (scene-level)
-            nir_ratio = float(arr[3].mean() / (mean_vis_img.mean() + 1e-6))
+            # # NIR ratio (scene-level)
+            # nir_ratio = float(arr[3].mean() / (mean_vis_img.mean() + 1e-6))
 
-            # Brightness & texture
-            mean_brightness = float(gray.mean())
-            std_texture = float(gray.std())
-            lap_var = float(cv2.Laplacian(gray, cv2.CV_32F).var())
+            # # Brightness & texture
+            # mean_brightness = float(gray.mean())
+            # std_texture = float(gray.std())
+            # lap_var = float(cv2.Laplacian(gray, cv2.CV_32F).var())
 
-            # Inter-band correlation (smooth clouds -> high correlation)
-            corr_bg = float(np.corrcoef(vis[0].ravel(), vis[1].ravel())[0, 1])
-            corr_rg = float(np.corrcoef(vis[2].ravel(), vis[1].ravel())[0, 1])
+            # # Inter-band correlation (smooth clouds -> high correlation)
+            # corr_bg = float(np.corrcoef(vis[0].ravel(), vis[1].ravel())[0, 1])
+            # corr_rg = float(np.corrcoef(vis[2].ravel(), vis[1].ravel())[0, 1])
 
             # Spectral consistency (low in noise)
-            spec_consistency = (corr_bg + corr_rg) / 2
+            # spec_consistency = (corr_bg + corr_rg) / 2
 
             props = dict(d.get("properties", {}))
             props["asset_id"] = asset_id
@@ -154,20 +152,20 @@ def run_one(region: str, year: int, month: int, dove: str) -> list[dict[str, Any
 
             for i, val in enumerate(udm_means, start=1):
                 props[f"udm_mean_{i}"] = float(val)
-            for i, val in enumerate(tif_means, start=1):
-                props[f"tif_mean_{i}"] = float(val)
-            for i, val in enumerate(tif_stds, start=1):
-                props[f"tif_std_{i}"] = float(val)
+            # for i, val in enumerate(tif_means, start=1):
+            #     props[f"tif_mean_{i}"] = float(val)
+            # for i, val in enumerate(tif_stds, start=1):
+            #     props[f"tif_std_{i}"] = float(val)
 
-            props["p90_vis"] = p90_vis
-            props["p95_vis"] = p95_vis
-            props["bright_frac"] = bright_frac
-            props["low_tex_frac"] = low_tex_frac
-            props["nir_ratio"] = nir_ratio
-            props["mean_brightness"] = mean_brightness
-            props["std_texture"] = std_texture
-            props["lap_var"] = lap_var
-            props["spec_consistency"] = spec_consistency
+            # props["p90_vis"] = p90_vis
+            # props["p95_vis"] = p95_vis
+            # props["bright_frac"] = bright_frac
+            # props["low_tex_frac"] = low_tex_frac
+            # props["nir_ratio"] = nir_ratio
+            # props["mean_brightness"] = mean_brightness
+            # props["std_texture"] = std_texture
+            # props["lap_var"] = lap_var
+            # props["spec_consistency"] = spec_consistency
 
             out.append(props)
 
@@ -183,7 +181,7 @@ def run():
     # Output directory and base file names
     out_dir = Path("/Volumes/x10pro/estuary/ca_all")
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_base = out_dir / "data_stats"
+    out_base = out_dir / "data_stats_simple"
     final_parquet = out_base.with_suffix(".parquet")
 
     num_workers = max(1, min(mp.cpu_count() - 1, 16))

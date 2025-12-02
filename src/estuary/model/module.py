@@ -15,6 +15,8 @@ from torchmetrics.classification import (
     BinaryCalibrationError,
     BinaryConfusionMatrix,
     BinaryF1Score,
+    BinaryPrecision,
+    BinaryRecall,
     MulticlassAccuracy,
     MulticlassAUROC,
     MulticlassCohenKappa,
@@ -89,6 +91,8 @@ class EstuaryModule(LightningModule):
                 "f1": BinaryF1Score(),
                 "accuracy": BinaryAccuracy(),
                 "auroc": BinaryAUROC(),
+                "precision": BinaryPrecision(),
+                "recall": BinaryRecall(),
             }
             self.train_cm = BinaryConfusionMatrix()
             self.val_cm = BinaryConfusionMatrix()

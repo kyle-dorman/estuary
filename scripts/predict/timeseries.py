@@ -2,15 +2,22 @@ import os
 from pathlib import Path
 
 import click
-import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
 import tqdm
+from sklearn.metrics import f1_score
 from torch.utils.data import DataLoader
 
-from estuary.model.data import EstuaryDataset, _load_labels
+from estuary.low_quality.module import LowQualityModule
+from estuary.model.data import EstuaryDataset
 from estuary.model.module import EstuaryModule
+from estuary.util.data import parse_dt_from_pth
+
+
+def label_map(label: str) -> str:
+    if label == "perched open":
+        return "open"
+    return label
 
 
 @click.command()
@@ -25,14 +32,31 @@ from estuary.model.module import EstuaryModule
     required=True,
 )
 @click.option(
-    "--save-path", type=click.Path(file_okay=True, dir_okay=False, path_type=Path), required=False
+    "--unsure-model-path",
+    type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),
+    required=True,
 )
-def main(labels_path: Path, model_path: Path, save_path: Path | None):
-    if save_path is None:
-        save_path = model_path.parent.parent / "timeseries_preds.csv"
-    module = EstuaryModule.load_from_checkpoint(model_path, batch_size=1).eval()
+@click.option("--threshold", type=float, default=0.5)
+@click.option("--threshold-unsure", type=float, default=0.5)
+def main(
+    labels_path: Path,
+    model_path: Path,
+    unsure_model_path: Path,
+    threshold: float,
+    threshold_unsure: float,
+):
+    save_path = model_path.parent.parent / f"{labels_path.stem}_preds.csv"
 
-    labels = _load_labels(module.conf.classes, labels_path)
+    module = EstuaryModule.load_from_checkpoint(model_path, batch_size=1).eval()
+    unsure_module = LowQualityModule.load_from_checkpoint(unsure_model_path, batch_size=1).eval()
+
+    labels = pd.read_csv(labels_path)
+    labels["acquired"] = labels["source_tif"].apply(lambda p: parse_dt_from_pth(Path(p)))
+    labels["date"] = labels["acquired"].dt.date
+    labels["orig_label"] = labels["label"]
+    labels["label_idx"] = labels.label.apply(lambda a: int(a != "closed"))
+    labels["y_true"] = labels.label.apply(lambda a: int(a != "closed"))
+    labels["y_true_unsure"] = labels.label.apply(lambda a: int(a == "unsure"))
 
     ds = EstuaryDataset(labels, module.conf, train=False)
     dl = DataLoader(
@@ -41,46 +65,42 @@ def main(labels_path: Path, model_path: Path, save_path: Path | None):
     )
     results_list = []
     for batch in tqdm.tqdm(dl, total=len(labels)):
-        batch = ds.transforms(batch)
         for k in batch.keys():
             if isinstance(batch[k], list):
                 continue
             batch[k] = batch[k].to(module.device)
 
+        unsure_logits = unsure_module(batch)
+        unsure_probs = torch.sigmoid(unsure_logits).detach().cpu().numpy()
+        unsure_probs = unsure_probs[0].item()
+
         logits = module(batch)
-        if logits.shape[1] == 1:
-            probs = torch.sigmoid(logits).detach().cpu().numpy()
-            preds = (probs > 0.5)[0].astype(np.int32).item()
-            probs = probs[0].item()
-        else:
-            probs = F.softmax(logits, dim=1).detach().cpu().numpy()
-            preds = probs.argmax(axis=1).tolist()[0].item()
-            probs = probs[0, 0].item()
+        probs = torch.sigmoid(logits).detach().cpu().numpy()
+        probs = probs[0].item()
 
         results_list.append(
             {
                 "source_tif": batch["source_tif"][0],
-                "y_true": batch["label"][0].detach().cpu().numpy(),
                 "y_prob": probs,
-                "y_pred": preds,
-                "region": batch["region"].detach().cpu().numpy().tolist()[0],
-                "dataset": "train",
+                "y_prob_unsure": unsure_probs,
+                "y_pred": probs > threshold,
+                "y_pred_unsure": unsure_probs > threshold_unsure,
             }
         )
 
-    ca_results_df = pd.DataFrame(results_list)
-    ca_results_df = pd.merge(
-        ca_results_df, labels[["source_tif", "orig_label"]], on="source_tif", how="left"
-    )
-    ca_results_df["correct"] = ca_results_df.y_true == ca_results_df.y_pred
+    results_df = pd.DataFrame(results_list)
+    results_df = pd.merge(results_df, labels, on="source_tif", how="left")
 
     print("Results", model_path.parent.parent.name)
     print("==========================")
-    print(round(ca_results_df["correct"].mean(), 3))
+    print("F1 w/sure")
+    print(f1_score(results_df.y_true, results_df.y_pred))
+    print("F1 unsure")
+    print(f1_score(results_df.y_true_unsure, results_df.y_pred_unsure))
 
     if save_path.exists():
         os.remove(save_path)
-    ca_results_df.to_csv(save_path, index=False)
+    results_df.to_csv(save_path, index=False)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ from estuary.util.transforms import (
     RandomPlasmaFog,
     ScaledRandomGaussianNoise,
     ScaleNormalization,
+    unsure_train_augs,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,10 +61,6 @@ def num_workers(conf: QualityConfig) -> int:
     return nw
 
 
-def load_labels(conf: QualityConfig) -> pd.DataFrame:
-    return _load_labels(conf.data)
-
-
 def _load_labels(data_path: Path) -> pd.DataFrame:
     df = pd.read_csv(data_path)
 
@@ -89,20 +86,34 @@ def create_splits(
     conf: QualityConfig, verbose: bool = True
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Create train/val splits."""
-    df_train = load_labels(conf)
-    df_train = df_train[df_train.cluster_label >= 0].copy()
-
+    df = _load_labels(conf.data)
     df_test = _load_labels(conf.test_data)
-    df_test["cluster_label"] = df_test.label.apply(lambda a: int(a == "unsure"))
+    df_test["unsure_label"] = df_test.label.apply(lambda a: int(a == "unsure"))
 
-    df_val = _load_labels(conf.val_data)
-    df_val["cluster_label"] = df_val.label.apply(lambda a: int(a == "unsure"))
+    if "unsure_label" in df.columns:
+        df = df[df.unsure_label >= 0].copy()
+    else:
+        df["unsure_label"] = df.label.apply(lambda a: int(a == "unsure"))
 
-    test_images = df_test.source_tif.tolist()
-    df_val = df_val[~df_val.source_tif.isin(test_images)].reset_index(drop=True)
-    test_val_images = df_val.source_tif.tolist() + test_images
+    if conf.split_method == "yearly":
+        # Yearly split: require val_year and test_year, and split by year column
+        df["year"] = df["acquired"].dt.year
+        if conf.val_year is None:
+            raise ValueError("yearly split requires conf.val_year")
+        df_val = df[df["year"] == conf.val_year].copy()
+        df_train = df[~df["year"].isin([conf.val_year])].copy()
 
-    df_train = df_train[~df_train.source_tif.isin(test_val_images)].reset_index(drop=True)
+        if df_val.empty:
+            raise ValueError(f"No samples found for val_year={conf.val_year}")
+
+    else:
+        df_train = df
+        assert conf.val_data is not None
+        df_val = _load_labels(conf.val_data)
+        df_val["unsure_label"] = df_val.label.apply(lambda a: int(a == "unsure"))
+
+        val_images = df_val.source_tif.tolist()
+        df_train = df_train[~df_train.source_tif.isin(val_images)].reset_index(drop=True)
 
     logger.info("Splitting dataset")
 
@@ -112,15 +123,35 @@ def create_splits(
     )
     df_train["dataset"] = "train"
     df_val["dataset"] = "val"
+    df_test["dataset"] = "test"
+
     if verbose:
         logger.info("Train Class Split")
-        logger.info(df_train["cluster_label"].value_counts().sort_index())
+        logger.info(df_train["unsure_label"].value_counts().sort_index())
         logger.info("Val Class Split")
-        logger.info(df_val["cluster_label"].value_counts().sort_index())
+        logger.info(df_val["unsure_label"].value_counts().sort_index())
         logger.info("Test Class Split")
-        logger.info(df_test["cluster_label"].value_counts().sort_index())
+        logger.info(df_test["unsure_label"].value_counts().sort_index())
 
     return df_train, df_val, df_test
+
+
+def calc_class_weights(conf: QualityConfig) -> tuple[float, ...]:
+    df, _, _ = create_splits(conf, verbose=False)
+
+    counts = df["unsure_label"].value_counts().sort_index()
+    # counts is a Series([n0, n1, n2]), where ni = number of examples in class i
+
+    # total number of samples
+    N = counts.sum()
+
+    # number of classes
+    C = len(counts)
+
+    # weight for each class = N / (C * ni)
+    weights = N / (C * counts.values)  # type: ignore
+
+    return tuple(weights.tolist())
 
 
 def load_tif(pth: Path, config: QualityConfig) -> np.ndarray:
@@ -187,7 +218,7 @@ class LowQualityDataset(Dataset):
         if train:
             self.resize_aug = K.RandomResizedCrop(
                 (self.conf.train_size, self.conf.train_size),
-                scale=self.conf.scale,
+                scale=self.conf.aug.scale,
                 resample=Resample.BICUBIC,
             )
         else:
@@ -268,19 +299,20 @@ class LowQualityDataset(Dataset):
             data_keys=None,
         )
 
-        augs: list[Any] = []
-        if train:
-            augs += [
-                K.RandomVerticalFlip(p=self.conf.vertical_flip_p),
-                K.RandomHorizontalFlip(p=self.conf.horizontal_flip_p),
-                K.RandomRotation90((0, 3), p=conf.rotation_p),
-            ]
+        augs = []
+        if self.train:
+            augs = unsure_train_augs(conf.aug, conf.bands)
 
-        augs += [
-            K.Resize(size=(conf.val_size, conf.val_size)),
-            K.Normalize(mean=self.norm_stats.mean.tolist(), std=self.norm_stats.std.tolist()),
-        ]
-        self.transforms = K.AugmentationSequential(*augs, data_keys=None)
+        augs.extend(
+            [
+                K.Resize(size=(conf.val_size, conf.val_size)),
+                K.Normalize(mean=self.norm_stats.mean.tolist(), std=self.norm_stats.std.tolist()),
+            ]
+        )
+        self.transforms = K.AugmentationSequential(
+            *augs,
+            data_keys=None,
+        )
 
     def denormalize(self, x: torch.Tensor) -> torch.Tensor:
         return K.Denormalize(mean=self.norm_stats.mean.tolist(), std=self.norm_stats.std.tolist())(
@@ -306,13 +338,13 @@ class LowQualityDataset(Dataset):
         pixels = self.base_augs({"image": pixels})["image"]
 
         if self.train:
-            if self.rng.random() > 0.5:
+            if self.rng.random() < self.conf.pct_low_quality:
                 pixels = self.perturb_augs({"image": pixels})["image"]
                 label = torch.tensor(1, dtype=torch.long)
             else:
-                label = torch.tensor(row["cluster_label"], dtype=torch.long)
+                label = torch.tensor(row["unsure_label"], dtype=torch.long)
         else:
-            label = torch.tensor(row["cluster_label"], dtype=torch.long)
+            label = torch.tensor(row["unsure_label"], dtype=torch.long)
 
         if pixels.ndim == 4 and pixels.shape[0] == 1:
             pixels = pixels.squeeze(0)
@@ -329,8 +361,6 @@ class LowQualityDataset(Dataset):
 # Lightning DataModule
 # -------------------------------------------------
 class LowQualityDataModule(LightningDataModule):
-    """train/val/test splits with stratified shuffle on the `label` column."""
-
     def __init__(
         self,
         conf: QualityConfig,
@@ -343,26 +373,24 @@ class LowQualityDataModule(LightningDataModule):
         # placeholders
         self.train_ds: Dataset | None = None
         self.val_ds: Dataset | None = None
-        self.test_ds: Dataset | None = None
 
         self.train_aug: K.AugmentationSequential | None = None
         self.val_aug: K.AugmentationSequential | None = None
-        self.test_aug: K.AugmentationSequential | None = None
 
     # -------- Lightning hooks --------
     def prepare_data(self) -> None:
         # verify files exist & readable
         if not self.conf.data.exists():
             raise FileNotFoundError(self.conf.data)
+        if self.conf.val_data is not None and not self.conf.val_data.exists():
+            raise FileNotFoundError(self.conf.val_data)
         if not self.conf.test_data.exists():
-            raise FileNotFoundError(self.conf.test_data)
-        if not self.conf.val_data.exists():
             raise FileNotFoundError(self.conf.val_data)
         if self.conf.normalization_path is not None and not self.conf.normalization_path.exists():
             raise FileNotFoundError(self.conf.normalization_path)
 
     def setup(self, stage: str | None = None) -> None:
-        if self.train_ds is None or self.val_ds is None or self.test_ds is None:
+        if self.train_ds is None or self.val_ds is None:
             df_train, df_val, df_test = create_splits(self.conf)
 
             # build datasets
@@ -436,11 +464,11 @@ class LowQualityDataModule(LightningDataModule):
             elif self.trainer.validating or self.trainer.sanity_checking:
                 aug = self.val_aug
             elif self.trainer.testing:
-                aug = self.test_aug
+                aug = self.val_aug
             elif self.trainer.predicting:
-                aug = self.test_aug
+                aug = self.val_aug
             else:
-                aug = self.test_aug
+                aug = self.val_aug
 
             assert aug is not None
             batch = aug(batch)

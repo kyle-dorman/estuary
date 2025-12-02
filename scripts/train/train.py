@@ -110,7 +110,7 @@ def main() -> None:
     )
 
     if trainer.is_global_zero:
-        # Save configs – full + diff
+        # Save configs - full + diff
         OmegaConf.save(config=cli_conf, f=model_dir / "cli_diff.yaml")
         OmegaConf.save(config=conf, f=model_dir / "conf_full.yaml")
         # trainer.world_size available after instantiation

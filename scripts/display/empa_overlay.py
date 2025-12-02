@@ -9,11 +9,11 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import rasterio
+import tqdm
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from PIL import Image
 
-from estuary.model.data import parse_dt_from_pth
 from estuary.util.img import broad_band, draw_border, false_color
 
 
@@ -236,6 +236,22 @@ def main(start_date=None, end_date=None):
     with open("/Users/kyledorman/data/estuary/geos/ca_empa_matching_sites.json") as f:
         matching_sites = json.load(f)
 
+    # timeseries_path = "/Users/kyledorman/data/results/estuary/train/20251114-130229/merged_all_regions_timeseries_preds.csv"
+    timeseries_path = (
+        "/Users/kyledorman/data/results/estuary/train/20251114-130229/merged_time_series_preds.csv"
+    )
+    preds_all = pd.read_csv(Path(timeseries_path))
+    # normalize times
+    preds_all["acquired"] = (
+        pd.to_datetime(preds_all["acquired"], errors="coerce", utc=True)
+        .dt.tz_convert("UTC")
+        .dt.tz_localize(None)
+        .astype("datetime64[ns]")
+    )
+    preds_all = preds_all.sort_values("acquired").dropna(subset=["acquired"])
+    preds_all["y_true_prob"] = 0.05
+    preds_all.loc[preds_all.y_true == 1, "y_true_prob"] = 0.95
+
     empa = pl.read_csv("/Volumes/x10pro/estuary/ca_all/empa/logger-raw-publish.csv")
 
     # Normalize unit strings (strip whitespace) so comparisons match exactly
@@ -358,22 +374,6 @@ def main(start_date=None, end_date=None):
         .sort(["siteid", "sensorid"])
     )
 
-    preds_all = pd.read_csv(
-        Path("/Users/kyledorman/data/results/estuary/train/20251021-151419/timeseries_preds.csv")
-    )
-    preds_all["acquired"] = preds_all["source_tif"].apply(lambda p: parse_dt_from_pth(Path(p)))
-    # normalize times
-    preds_all["acquired"] = (
-        pd.to_datetime(preds_all["acquired"], errors="coerce", utc=True)
-        .dt.tz_convert("UTC")
-        .dt.tz_localize(None)
-        .astype("datetime64[ns]")
-    )
-    preds_all = preds_all.sort_values("acquired").dropna(subset=["acquired"])
-    preds_all["y_true_prob"] = 0.05
-    preds_all.loc[preds_all.orig_label == "perched open", "y_true_prob"] = 0.6
-    preds_all.loc[preds_all.orig_label == "open", "y_true_prob"] = 0.95
-
     # --------- Filter by start/end date if provided ---------
     if start_date or end_date:
         # Convert to naive UTC datetimes for comparison
@@ -405,8 +405,7 @@ def main(start_date=None, end_date=None):
     ]
 
     corr_skip = []
-
-    for siteid, sensorid, _, _ in empa_ranges.iter_rows():
+    for siteid, sensorid, _, _ in tqdm.tqdm(empa_ranges.iter_rows(), total=len(empa_ranges)):
         region = next(k for k, v in matching_sites.items() if v == siteid)
         region = int(region)
         region_name = gdf.loc[region]["Site name"]
@@ -438,6 +437,7 @@ def main(start_date=None, end_date=None):
                     keep_cols.append(col3)
 
         if not len(keep_cols):
+            print("Skipping", siteid, sensorid, "not enough columns")
             continue
 
         empa_sensor_data = (
@@ -488,6 +488,7 @@ def main(start_date=None, end_date=None):
 
         date_range = empa_sensor_data["acquired"].max() - empa_sensor_data["acquired"].min()
         if date_range < pd.Timedelta(days=90):
+            print("Skipping", siteid, sensorid, "not long enough")
             continue
 
         predictions = preds_all[preds_all.region == region]
@@ -496,24 +497,29 @@ def main(start_date=None, end_date=None):
             (predictions["acquired"] >= empa_sensor_data["acquired"].min())
             & (predictions["acquired"] <= empa_sensor_data["acquired"].max())
         ].copy()
-        changes = find_state_changes(predictions, "y_true", include_first=False)
-        if not len(changes):
+        orig_changes = find_state_changes(
+            predictions[predictions.y_true_unsure != 1], "y_true", include_first=False
+        )
+        if not len(orig_changes):
+            print("Skipping", siteid, sensorid, "no changes")
             continue
 
         keep_cols = sorted(keep_cols)
 
         if not any("depth" in c for c in keep_cols):
+            print("Skipping", siteid, sensorid, "not enough columns 2")
             continue
 
         print(siteid, sensorid, keep_cols)
 
-        for label_name, pred_col, prob_col in [
-            ("label", "y_true", "y_true_prob"),
-            ("prediction", "y_pred", "y_prob"),
+        for label_name, pred_col, prob_col, unsure_col in [
+            ("label", "y_true", "y_true_prob", "y_true_unsure"),
+            ("prediction", "y_pred", "y_prob", "y_pred_unsure"),
         ]:
             # Plot images of changes
-            changes = find_state_changes(predictions, pred_col, include_first=True)
-            change_rows = predictions.loc[changes.index][["source_tif", "acquired", pred_col]]
+            pt_predictions = predictions[predictions[unsure_col] != 1]
+            changes = find_state_changes(pt_predictions, pred_col, include_first=True)
+            change_rows = pt_predictions.loc[changes.index][["source_tif", "acquired", pred_col]]
 
             nrows = len(change_rows)
             fig, axes = plt.subplots(ncols=1, nrows=nrows, figsize=(7, 7 * nrows))
@@ -548,7 +554,7 @@ def main(start_date=None, end_date=None):
             plt.close(fig=fig)
 
             # Plot time series data
-            nrows = len(keep_cols) + 1
+            nrows = len(keep_cols)  # + 1
             fig, axes = plt.subplots(ncols=1, nrows=nrows, figsize=(11, 4 * nrows), sharex=True)
             if nrows == 1:
                 axes = [axes]
@@ -556,20 +562,20 @@ def main(start_date=None, end_date=None):
             for ax, col in zip(axes[: len(keep_cols)], keep_cols, strict=False):
                 plot_metric(
                     sensor_df=empa_sensor_data,
-                    predictions=predictions,
+                    predictions=pt_predictions,
                     col=col,
                     pred_col=pred_col,
                     ax=ax,
                 )
 
-            # Add predicted probability plot in the last axis
-            ax_prob: Axes = axes[-1]
-            y_prob = rolling_smooth(predictions, "acquired", prob_col)[f"rolling_{prob_col}"]
-            ax_prob.scatter(x=predictions["acquired"], y=y_prob, lw=1.2, color="gray")
-            ax_prob.set_ylabel(prob_col)
-            ax_prob.set_ylim(-0.05, 1.05)
-            ax_prob.set_title(f"{label_name.capitalize()} probability")
-            format_time_axis(ax_prob)
+            # # Add predicted probability plot in the last axis
+            # ax_prob: Axes = axes[-1]
+            # y_prob = rolling_smooth(pt_predictions, "acquired", prob_col)[f"rolling_{prob_col}"]
+            # ax_prob.scatter(x=pt_predictions["acquired"], y=y_prob, lw=1.2, color="gray")
+            # ax_prob.set_ylabel(prob_col)
+            # ax_prob.set_ylim(-0.05, 1.05)
+            # ax_prob.set_title(f"{label_name.capitalize()} probability")
+            # format_time_axis(ax_prob)
 
             axes[-1].set_xlabel("Time")
             fig.suptitle(f"{region_name} - {sensorid} - {label_name.capitalize()}", fontsize=14)
@@ -580,9 +586,10 @@ def main(start_date=None, end_date=None):
             plt.savefig(save_path, dpi=200)
             plt.close(fig=fig)
 
-    for siteid, sensorid, _, _ in corr_ranges.iter_rows():
+    for siteid, sensorid, _, _ in tqdm.tqdm(corr_ranges.iter_rows(), total=len(corr_ranges)):
         key = (siteid, sensorid)
         if key in corr_skip:
+            print(siteid, sensorid, "skip site manually")
             continue
 
         region = next(k for k, v in matching_sites.items() if v == siteid)
@@ -619,6 +626,7 @@ def main(start_date=None, end_date=None):
 
         date_range = corr_sensor_data["acquired"].max() - corr_sensor_data["acquired"].min()
         if date_range < pd.Timedelta(days=90):
+            print(siteid, sensorid, "date range too short")
             continue
 
         predictions = preds_all[preds_all.region == region]
@@ -627,19 +635,23 @@ def main(start_date=None, end_date=None):
             (predictions["acquired"] >= corr_sensor_data["acquired"].min())
             & (predictions["acquired"] <= corr_sensor_data["acquired"].max())
         ].copy()
-        changes = find_state_changes(predictions, "y_true", include_first=False)
+        changes = find_state_changes(
+            predictions[predictions.y_true_unsure != 1], "y_true", include_first=False
+        )
         if not len(changes):
+            print(siteid, sensorid, "no changes")
             continue
 
         print(siteid, sensorid, "corrected_depth")
 
-        for label_name, pred_col, prob_col in [
-            ("label", "y_true", "y_true_prob"),
-            ("prediction", "y_pred", "y_prob"),
+        for label_name, pred_col, prob_col, unsure_col in [
+            ("label", "y_true", "y_true_prob", "y_true_unsure"),
+            ("prediction", "y_pred", "y_prob", "y_pred_unsure"),
         ]:
             # Plot images of changes
-            changes = find_state_changes(predictions, pred_col, include_first=True)
-            change_rows = predictions.loc[changes.index][["source_tif", "acquired", pred_col]]
+            pt_predictions = predictions[predictions[unsure_col] != 1]
+            changes = find_state_changes(pt_predictions, pred_col, include_first=True)
+            change_rows = pt_predictions.loc[changes.index][["source_tif", "acquired", pred_col]]
 
             nrows = len(change_rows)
             fig, axes = plt.subplots(ncols=1, nrows=nrows, figsize=(7, 7 * nrows))
@@ -678,7 +690,7 @@ def main(start_date=None, end_date=None):
 
             plot_metric(
                 sensor_df=corr_sensor_data,
-                predictions=predictions,
+                predictions=pt_predictions,
                 col="corrected_depth",
                 pred_col=pred_col,
                 ax=axes[0],
@@ -686,8 +698,8 @@ def main(start_date=None, end_date=None):
 
             # Add predicted probability plot in the last axis
             ax_prob: Axes = axes[-1]
-            y_prob = rolling_smooth(predictions, "acquired", prob_col)[f"rolling_{prob_col}"]
-            ax_prob.scatter(x=predictions["acquired"], y=y_prob, lw=1.2, color="gray")
+            y_prob = rolling_smooth(pt_predictions, "acquired", prob_col)[f"rolling_{prob_col}"]
+            ax_prob.scatter(x=pt_predictions["acquired"], y=y_prob, lw=1.2, color="gray")
             ax_prob.set_ylabel(prob_col)
             ax_prob.set_ylim(-0.05, 1.05)
             ax_prob.set_title(f"{label_name.capitalize()} probability")

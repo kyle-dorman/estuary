@@ -14,6 +14,9 @@ from kornia.enhance import normalize_min_max
 from kornia.utils.helpers import _extract_device_dtype
 from torchvision.transforms import InterpolationMode
 
+from estuary.util.bands import Bands
+from estuary.util.config import AugmentConfig
+
 
 class PowerTransformTorch(IntensityAugmentationBase2D):
     def __init__(self, lambdas: list[float], max_val: int):
@@ -31,7 +34,7 @@ class PowerTransformTorch(IntensityAugmentationBase2D):
     @staticmethod
     def _yeo_johnson(x: torch.Tensor, lam: torch.Tensor) -> torch.Tensor:
         """
-        Vectorized Yeo–Johnson transform.
+        Vectorized Yeo-Johnson transform.
         x: (B,C,H,W) or (C,H,W) assumed channel-first with C == lam.numel().
         lam: (C,) tensor of per-channel lambdas.
         Uses torch.where for safe broadcasting (avoids boolean indexing shape errors).
@@ -611,10 +614,182 @@ class MisalignedImage(IntensityAugmentationBase2D):
         return data
 
 
-if __name__ == "__main__":
-    base = torch.randn((5, 3, 10, 10))
-    aug = MisalignedImage(
-        p=1.0, angle_deg=(5.0, 35.0), edge_shift=(-20, 20), offset=(-20, 20), border_crop=30
+def basic_train_augs(conf: AugmentConfig, bands: Bands) -> list[K.AugmentationBase2D]:
+    noise_aug = K.AugmentationSequential(
+        K.RandomBrightness(p=0.0),  # Identity,
+        K.AugmentationSequential(
+            K.RandomSaltAndPepperNoise(
+                amount=tuple(conf.salt_pepper_amount),  # type: ignore
+                p=1.0,
+            ),
+            K.RandomGaussianNoise(
+                mean=0.0,
+                std=conf.gauss_std,
+                p=1.0,
+            ),
+            K.RandomRain(
+                p=1.0,
+                number_of_drops=conf.rain_number_of_drops,
+                drop_height=conf.rain_drop_height,
+                drop_width=conf.rain_drop_width,
+            ),
+            K.RandomErasing(p=1.0, scale=conf.erasing_scale),
+            RandomPlasmaFog(
+                p=1.0,
+                fog_intensity=conf.fog_intensity,
+                roughness=conf.fog_roughness,
+            ),
+            K.RandomPlasmaShadow(
+                p=1.0,
+                shade_intensity=conf.shade_intensity,
+                shade_quantity=conf.shade_quantity,
+            ),
+            random_apply=1,
+        ),
+        random_apply=1,
     )
 
-    aug(base)
+    illumination = K.AugmentationSequential(
+        K.RandomLinearIllumination(p=1.0, gain=tuple(conf.illumination_gain)),  # type: ignore
+        K.RandomLinearCornerIllumination(p=1.0, gain=tuple(conf.illumination_gain)),  # type: ignore
+        random_apply=1,
+    )
+
+    if bands.num_channels == 3:
+        jiggle = K.ColorJiggle(
+            brightness=conf.brightness,
+            contrast=conf.contrast,
+            p=1.0,
+        )
+    else:
+        jiggle = K.AugmentationSequential(
+            K.RandomBrightness(brightness=(1 - conf.brightness, 1 + conf.brightness), p=1.0),
+            K.RandomContrast(contrast=(1 - conf.contrast, 1 + conf.contrast), p=1.0),
+        )
+
+    if bands.num_channels == 3:
+        channel_shift = RandomChannelShift(
+            shift_limit=conf.channel_shift_limit,
+            num_channels=bands.num_channels(),
+            p=1.0,
+        )
+    else:
+        channel_shift = K.RandomRGBShift(
+            r_shift_limit=conf.channel_shift_limit,
+            g_shift_limit=conf.channel_shift_limit,
+            b_shift_limit=conf.channel_shift_limit,
+            p=1.0,
+        )
+
+    color_augs = K.AugmentationSequential(
+        K.RandomBrightness(p=0.0),  # Identity,
+        K.AugmentationSequential(
+            jiggle,
+            K.RandomPlasmaContrast(p=1.0),
+            K.RandomPlasmaBrightness(p=1.0, intensity=conf.plasma_brightness),
+            K.RandomSharpness(sharpness=conf.sharpness, p=1.0),
+            channel_shift,
+            K.RandomPlanckianJitter(
+                p=1.0,
+            ),
+            illumination,
+            K.RandomPosterize(
+                p=1.0,
+                bits=(conf.posterize_bits, 7),
+            ),
+            random_apply=(1, 2),
+        ),
+        random_apply=1,
+    )
+
+    blur_augs = K.AugmentationSequential(
+        K.RandomBrightness(p=0.0),  # Identity,
+        K.AugmentationSequential(
+            K.RandomGaussianBlur(
+                kernel_size=conf.blur_kernel_size,
+                sigma=conf.blur_sigma,
+                p=1.0,
+            ),
+            K.RandomMotionBlur(
+                kernel_size=conf.blur_kernel_size,
+                angle=35,
+                direction=0.5,
+                border_type=2,
+                p=1.0,
+            ),
+            K.RandomMedianBlur(
+                kernel_size=(
+                    conf.median_blur_kernel_size,
+                    conf.median_blur_kernel_size,
+                ),
+                p=1.0,
+            ),
+            K.RandomBoxBlur(
+                kernel_size=(
+                    conf.box_blur_kernel_size,
+                    conf.box_blur_kernel_size,
+                ),
+                p=1.0,
+            ),
+            random_apply=1,
+        ),
+        random_apply=1,
+    )
+
+    return [
+        K.RandomVerticalFlip(p=conf.vertical_flip_p),
+        K.RandomHorizontalFlip(p=conf.horizontal_flip_p),
+        K.RandomRotation90((0, 3), p=conf.rotation_p),
+        color_augs,
+        blur_augs,
+        noise_aug,
+    ]  # type: ignore
+
+
+def unsure_train_augs(conf: AugmentConfig, bands: Bands) -> list[K.AugmentationBase2D]:
+    if bands.num_channels == 3:
+        jiggle = K.ColorJiggle(
+            brightness=conf.brightness,
+            contrast=conf.contrast,
+            p=1.0,
+        )
+    else:
+        jiggle = K.AugmentationSequential(
+            K.RandomBrightness(brightness=(1 - conf.brightness, 1 + conf.brightness), p=1.0),
+            K.RandomContrast(contrast=(1 - conf.contrast, 1 + conf.contrast), p=1.0),
+        )
+
+    if bands.num_channels == 3:
+        channel_shift = RandomChannelShift(
+            shift_limit=conf.channel_shift_limit,
+            num_channels=bands.num_channels(),
+            p=1.0,
+        )
+    else:
+        channel_shift = K.RandomRGBShift(
+            r_shift_limit=conf.channel_shift_limit,
+            g_shift_limit=conf.channel_shift_limit,
+            b_shift_limit=conf.channel_shift_limit,
+            p=1.0,
+        )
+
+    color_augs = K.AugmentationSequential(
+        K.RandomBrightness(p=0.0),  # Identity,
+        K.AugmentationSequential(
+            jiggle,
+            K.RandomSharpness(sharpness=conf.sharpness, p=1.0),
+            channel_shift,
+            K.RandomPlanckianJitter(
+                p=1.0,
+            ),
+            random_apply=1,
+        ),
+        random_apply=1,
+    )
+
+    return [
+        K.RandomVerticalFlip(p=conf.vertical_flip_p),
+        K.RandomHorizontalFlip(p=conf.horizontal_flip_p),
+        K.RandomRotation90((0, 3), p=conf.rotation_p),
+        color_augs,  # type: ignore
+    ]  # type: ignore

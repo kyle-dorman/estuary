@@ -15,6 +15,8 @@ from torchmetrics.classification import (
     BinaryCalibrationError,
     BinaryConfusionMatrix,
     BinaryF1Score,
+    BinaryPrecision,
+    BinaryRecall,
 )
 from torchvision.utils import make_grid
 
@@ -50,7 +52,11 @@ def load_encorder_from_path(conf: QualityConfig, num_classes: int) -> nn.Module:
     assert conf.encoder_checkpoint_path is not None
 
     module = EstuaryModule.load_from_checkpoint(
-        conf.encoder_checkpoint_path, compile=False, drop_path=conf.drop_path, dropout=conf.dropout
+        conf.encoder_checkpoint_path,
+        compile=False,
+        drop_path=conf.drop_path,
+        dropout=conf.dropout,
+        strict=False,
     )
     model: TimmModel = module.model  # type: ignore
 
@@ -98,6 +104,8 @@ class LowQualityModule(LightningModule):
             "f1": BinaryF1Score(),
             "accuracy": BinaryAccuracy(),
             "auroc": BinaryAUROC(),
+            "precision": BinaryPrecision(),
+            "recall": BinaryRecall(),
         }
         self.train_cm = BinaryConfusionMatrix()
         self.val_cm = BinaryConfusionMatrix()
@@ -111,8 +119,20 @@ class LowQualityModule(LightningModule):
         self.val_metrics = metrics.clone(prefix="val/").to(self.device)
         self.test_metrics = metrics.clone(prefix="test/").to(self.device)
 
+        weights = (
+            torch.tensor(conf.class_weights, device=self.device)
+            if conf.class_weights is not None
+            else None
+        )
         if conf.loss_fn == "ce":
-            self.loss_fn = nn.BCEWithLogitsLoss()
+            # Single-logit BCE with logits. Turn class weights into pos_weight if provided.
+            pos_weight = None
+            if weights is not None and len(weights) == 2:
+                # CE weights ~ [w0, w1]; BCE pos_weight scales positives.
+                w0, w1 = weights[0].item(), weights[1].item()
+                if w0 > 0:
+                    pos_weight = torch.tensor([w1 / w0], device=self.device)
+            self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         elif conf.loss_fn == "focal":
             self.loss_fn = FocalLoss(gamma=conf.focal_gamma, alpha=conf.focal_alpha)
         else:
