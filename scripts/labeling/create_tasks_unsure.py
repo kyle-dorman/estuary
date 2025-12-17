@@ -49,10 +49,6 @@ Environment
 # --------------------------------------------------------------------------- #
 
 
-def sample_one(g):
-    return g.sample(n=1, random_state=None)
-
-
 def regions_tifs(base_dir: Path) -> dict[int, list[Path]]:
     """Walk BASE/SAT/YEAR/MONTH/REGION/files/*_SR_clip.tif and return
     [(region_name, [tif, tif, ...]), ...]

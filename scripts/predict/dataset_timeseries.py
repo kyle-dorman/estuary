@@ -24,13 +24,15 @@ def main():
     args = parser.parse_args()
 
     module = EstuaryModule.load_from_checkpoint(args.model_path, batch_size=1).eval()
-    module = module.eval()
 
     dm = EstuaryDataModule(module.conf)
     dm.prepare_data()
     dm.setup()
 
-    dfs = pd.concat([dm.train_ds.df, dm.val_ds.df, dm.test_ds.df], ignore_index=True)  # type: ignore
+    dfs = pd.concat(
+        [dm.train_ds.df, dm.val_ds.df, dm.test_ds.df],  # type: ignore
+        ignore_index=True,
+    )
     ds = EstuaryDataset(
         df=dfs,
         conf=module.conf,

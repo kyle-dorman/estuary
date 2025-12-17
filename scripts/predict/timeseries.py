@@ -30,7 +30,7 @@ def label_map(label: str) -> str:
     "--model-path",
     type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),
     required=True,
-)
+)  # 20251203-095017
 @click.option(
     "--unsure-model-path",
     type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),

@@ -164,8 +164,8 @@ def plot_metric(
     gaps = _find_gaps(
         predictions[["acquired"]].sort_values("acquired"),
         time_col="acquired",
-        min_gap=pd.Timedelta(days=4.5),
-        edge_buffer=pd.Timedelta(hours=12),
+        min_gap=pd.Timedelta(days=1.7),
+        edge_buffer=pd.Timedelta(hours=10),
         series_start=sensor_df["acquired"].min(),
         series_end=sensor_df["acquired"].max(),
     )
@@ -395,13 +395,13 @@ def main(start_date=None, end_date=None):
 
     empa_cols = [
         "depth",
-        "h2otemp",
-        "ph",
-        "conductivity",
-        "turbidity",
-        "do",
-        "chlorophyll",
-        "orp",
+        # "h2otemp",
+        # "ph",
+        # "conductivity",
+        # "turbidity",
+        # "do",
+        # "chlorophyll",
+        # "orp",
     ]
 
     corr_skip = []
@@ -484,7 +484,7 @@ def main(start_date=None, end_date=None):
         )
 
         # Filter gaps
-        empa_sensor_data = keep_longest_contiguous(empa_sensor_data)
+        empa_sensor_data = keep_longest_contiguous(empa_sensor_data, gap_hours=36)
 
         date_range = empa_sensor_data["acquired"].max() - empa_sensor_data["acquired"].min()
         if date_range < pd.Timedelta(days=90):
@@ -512,7 +512,7 @@ def main(start_date=None, end_date=None):
 
         print(siteid, sensorid, keep_cols)
 
-        for label_name, pred_col, prob_col, unsure_col in [
+        for label_name, pred_col, _, unsure_col in [
             ("label", "y_true", "y_true_prob", "y_true_unsure"),
             ("prediction", "y_pred", "y_prob", "y_pred_unsure"),
         ]:
