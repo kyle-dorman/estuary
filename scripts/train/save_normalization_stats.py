@@ -150,6 +150,7 @@ def main(
         "power_scale": power_scale,
         "max_raw_pixel_value": max_raw_pixel_value,
         "max_std": max_std,
+        "min_count": min_count,
     }
     with open(save_path / "stats.json", "w") as f:
         json.dump(stats, f)

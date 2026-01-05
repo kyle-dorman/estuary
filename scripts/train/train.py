@@ -20,6 +20,8 @@ from estuary.util.my_logging import setup_logger
 
 logger = logging.getLogger(__name__)
 
+torch.serialization.add_safe_globals([DictConfig])
+
 
 def main() -> None:
     """

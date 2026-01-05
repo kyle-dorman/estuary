@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 # ---------------- USER CONFIG ----------------
 DEBUG=false
-BATCH_SIZE=32
+BATCH_SIZE=64
 WORKERS=4
 PREFETCH=2
 
@@ -15,7 +15,7 @@ PREFETCH=2
 
 uv run --env-file .env scripts/train/train.py \
     data="/Users/kyledorman/data/estuary/dataset/open_closed.csv" \
-    normalization_path="/Users/kyledorman/data/estuary/dataset/normalization/stats.json" \
+    normalization_path="/Users/kyledorman/data/estuary/dataset/normalization_no_power/stats.json" \
     epochs=25 \
     debug=${DEBUG} \
     batch_size=${BATCH_SIZE} \
@@ -29,5 +29,4 @@ uv run --env-file .env scripts/train/train.py \
     aug_level="split" \
     train_size=384 \
     val_size=384 \
-    model_name="convnext_tiny.in12k" \
     ;
