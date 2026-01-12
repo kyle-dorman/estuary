@@ -8,7 +8,39 @@ from shapely.geometry import Point
 
 warnings.filterwarnings("ignore", message="Geometry is in a geographic CRS")
 
-ca_points = gpd.read_file("/Users/kyledorman/data/estuary/geos/ca_data.geojson")
+ca_points = gpd.read_file("/Volumes/x10pro/estuary/geos/ca_data_w_empa_pmep.geojson")
+
+
+SKIP = [
+    13,
+    22,
+    29,
+    23,
+    28,
+    25,
+    31,
+    45,
+    46,
+    36,
+    48,
+    55,
+    13073,
+    56,
+    2138,
+    13057,
+    57,
+    54,
+    53,
+    52,
+    64,
+    71,
+    77,
+    83,
+    96,
+    95,
+    12103,
+    14,
+]
 
 
 def get_usgs_sites(lat, lon, buffer_deg):
@@ -57,21 +89,21 @@ def nearest_usgs_site(lat, lon, buffer_deg=0.05):
 
 
 ca_with_river = ca_points.copy()
-ca_with_river["station_nm"] = None
-ca_with_river["site_no"] = None
-ca_with_river["site_latitude"] = None
-ca_with_river["site_longitude"] = None
+ca_with_river["usgs_station_nm"] = None
+ca_with_river["usgs_site_no"] = None
+ca_with_river["usgs_site_latitude"] = None
+ca_with_river["usgs_site_longitude"] = None
 for idx, est_row in ca_with_river.iterrows():
-    if est_row["Site code"] in [28, 23, 14]:
+    if est_row["Site code"] in SKIP:
         continue
-    lat, lon = est_row.Latitude, est_row.Longitude
-    site = nearest_usgs_site(lat, lon, buffer_deg=0.03)
+    lat, lon = est_row.geometry.centroid.y, est_row.geometry.centroid.x
+    site = nearest_usgs_site(lat, lon, buffer_deg=0.05)
     if site is not None:
-        ca_with_river.loc[idx, "station_nm"] = site.siteName
-        ca_with_river.loc[idx, "site_no"] = site.siteCode
-        ca_with_river.loc[idx, "site_latitude"] = site.latitude
-        ca_with_river.loc[idx, "site_longitude"] = site.longitude
+        print(est_row["Estuary_Name"], site.siteName, est_row["Site code"])
+        ca_with_river.loc[idx, "usgs_station_nm"] = site.siteName
+        ca_with_river.loc[idx, "usgs_site_no"] = site.siteCode
+        ca_with_river.loc[idx, "usgs_site_latitude"] = site.latitude
+        ca_with_river.loc[idx, "usgs_site_longitude"] = site.longitude
 
-(~ca_with_river.site_no.isna()).sum()
 
-ca_with_river.to_file("/Users/kyledorman/data/estuary/geos/ca_data_w_usgs.geojson")
+ca_with_river.to_file("/Volumes/x10pro/estuary/geos/ca_data_w_empa_pmep_usgs.geojson")
