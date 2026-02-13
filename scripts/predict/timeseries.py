@@ -14,12 +14,6 @@ from estuary.model.module import EstuaryModule
 from estuary.util.data import parse_dt_from_pth
 
 
-def label_map(label: str) -> str:
-    if label == "perched open":
-        return "open"
-    return label
-
-
 @click.command()
 @click.option(
     "--labels-path",
@@ -30,32 +24,37 @@ def label_map(label: str) -> str:
     "--model-path",
     type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),
     required=True,
-)  # 20251203-095017
+)
 @click.option(
     "--unsure-model-path",
     type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),
     required=True,
 )
-@click.option("--threshold", type=float, default=0.5)
 @click.option("--threshold-unsure", type=float, default=0.5)
 def main(
     labels_path: Path,
     model_path: Path,
     unsure_model_path: Path,
-    threshold: float,
     threshold_unsure: float,
 ):
     save_path = model_path.parent.parent / f"{labels_path.stem}_preds.csv"
 
-    module = EstuaryModule.load_from_checkpoint(model_path, batch_size=1).eval()
-    unsure_module = LowQualityModule.load_from_checkpoint(unsure_model_path, batch_size=1).eval()
+    module = EstuaryModule.load_from_checkpoint(model_path, batch_size=1, weights_only=False).eval()
+    unsure_module = LowQualityModule.load_from_checkpoint(
+        unsure_model_path, batch_size=1, weights_only=False
+    ).eval()
 
     labels = pd.read_csv(labels_path)
+    if "label" not in labels.columns:
+        labels["label"] = "open"
     labels["acquired"] = labels["source_tif"].apply(lambda p: parse_dt_from_pth(Path(p)))
-    labels["date"] = labels["acquired"].dt.date
+    labels["date"] = labels["acquired"].dt.date  # type: ignore
     labels["orig_label"] = labels["label"]
-    labels["label_idx"] = labels.label.apply(lambda a: int(a != "closed"))
-    labels["y_true"] = labels.label.apply(lambda a: int(a != "closed"))
+    # build a lookup dict → index
+    lookup = {tok: idx for idx, tok in enumerate(module.conf.classes)}
+    lookup["unsure"] = -1
+    labels["label_idx"] = labels["label"].map(lookup)
+    labels["y_true"] = labels.label_idx
     labels["y_true_unsure"] = labels.label.apply(lambda a: int(a == "unsure"))
 
     ds = EstuaryDataset(labels, module.conf, train=False)
@@ -74,19 +73,44 @@ def main(
         unsure_probs = torch.sigmoid(unsure_logits).detach().cpu().numpy()
         unsure_probs = unsure_probs[0].item()
 
-        logits = module(batch)
-        probs = torch.sigmoid(logits).detach().cpu().numpy()
-        probs = probs[0].item()
+        logits: torch.Tensor = module(batch)
 
-        results_list.append(
-            {
-                "source_tif": batch["source_tif"][0],
-                "y_prob": probs,
-                "y_prob_unsure": unsure_probs,
-                "y_pred": probs > threshold,
-                "y_pred_unsure": unsure_probs > threshold_unsure,
-            }
+        probs = torch.softmax(logits, dim=1)
+        probs_np = probs.detach().cpu().numpy()[0]
+
+        # Predicted class + confidence
+        y_pred = probs.argmax(dim=1).item()
+        y_prob = probs[0, y_pred].item()  # type: ignore
+
+        # Openness score in [-1, 1] as the expectation of a per-class openness weight.
+        # IMPORTANT: this must match the *order* of `module.conf.classes`.
+        # Adjust weights if you add/remove/reorder classes.
+        openness_weight_by_class = {
+            "closed": -1.0,
+            "open": 1.0,
+            "perched open": 1.0,
+        }
+        weights = torch.tensor(
+            [openness_weight_by_class[c] for c in module.conf.classes],
+            device=probs.device,
+            dtype=probs.dtype,
         )
+        openness = (probs * weights.unsqueeze(0)).sum(dim=1).item()
+
+        row = {
+            "source_tif": batch["source_tif"][0],
+            "y_prob": y_prob,
+            "openness": openness,
+            "y_prob_unsure": unsure_probs,
+            "y_pred": y_pred,
+            "y_pred_unsure": unsure_probs > threshold_unsure,
+        }
+
+        # add one column per class
+        for cls, p in zip(module.conf.classes, probs_np, strict=True):
+            row[f"p_{cls.replace(' ', '_')}"] = float(p)
+
+        results_list.append(row)
 
     results_df = pd.DataFrame(results_list)
     results_df = pd.merge(results_df, labels, on="source_tif", how="left")
@@ -94,7 +118,7 @@ def main(
     print("Results", model_path.parent.parent.name)
     print("==========================")
     print("F1 w/sure")
-    print(f1_score(results_df.y_true, results_df.y_pred))
+    print(f1_score(results_df.y_true, results_df.y_pred, average="macro"))
     print("F1 unsure")
     print(f1_score(results_df.y_true_unsure, results_df.y_pred_unsure))
 

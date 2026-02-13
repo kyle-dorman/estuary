@@ -40,7 +40,7 @@ LATEST_CKPT=$(find /Users/kyledorman/data/results/estuary_quality/train/*/checkp
 echo "Using latest checkpoint: $LATEST_CKPT"
 
 uv run --env-file .env scripts/train/train_low_quality.py \
-    data="/Users/kyledorman/data/estuary/dataset/open_closed.csv" \
+    data="/Users/kyledorman/data/estuary/dataset/train.csv" \
     test_data="/Users/kyledorman/data/estuary/dataset/time_series.csv" \
     normalization_path="/Users/kyledorman/data/estuary/dataset/normalization/stats.json" \
     epochs=${FINE_TUNE_EPOCHS} \

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 
-PATH = "/Volumes/x10pro/estuary/ca_all/tj_download.csv"
+PATH = "/Volumes/x10pro/estuary/water_data/raw/tj_download.csv"
 
 
 df = pd.read_csv(PATH)

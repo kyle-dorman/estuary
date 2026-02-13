@@ -252,7 +252,7 @@ def main(start_date=None, end_date=None):
     preds_all["y_true_prob"] = 0.05
     preds_all.loc[preds_all.y_true == 1, "y_true_prob"] = 0.95
 
-    empa = pl.read_csv("/Volumes/x10pro/estuary/ca_all/empa/logger-raw-publish.csv")
+    empa = pl.read_csv("/Volumes/x10pro/estuary/water_data/raw/empa/logger-raw-publish.csv")
 
     # Normalize unit strings (strip whitespace) so comparisons match exactly
     empa = empa.with_columns(
@@ -343,7 +343,7 @@ def main(start_date=None, end_date=None):
     )
 
     corr = pl.read_csv(
-        "/Volumes/x10pro/estuary/ca_all/empa/logger-raw-depth-correction-publish.csv"
+        "/Volumes/x10pro/estuary/water_data/raw/empa/logger-raw-depth-correction-publish.csv"
     )
     corr = corr.with_columns(
         [

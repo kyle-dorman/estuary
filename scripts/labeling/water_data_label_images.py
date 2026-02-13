@@ -5,9 +5,25 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import tqdm
 from PIL import Image
 
 from estuary.util.img import tif_to_rgb
+
+
+def filter_outliers(df: pd.DataFrame, depth_col: str = "height") -> pd.DataFrame:
+    # Quick-and-dirty outlier removal on depth values using IQR
+    y = df[depth_col].astype(float)
+    q1 = y.quantile(0.25)
+    q3 = y.quantile(0.75)
+    iqr = q3 - q1
+
+    # Keep points within 3 * IQR (lenient to preserve events)
+    lo = q1 - 3 * iqr
+    hi = q3 + 3 * iqr
+
+    mask = (y >= lo) & (y <= hi)
+    return df.loc[mask].copy()
 
 
 def contiguous_segments(
@@ -32,7 +48,8 @@ def contiguous_segments(
 
         if seg.empty:
             continue
-        out.append(seg.copy())
+
+        out.append(filter_outliers(seg.copy()))
 
     return out
 
@@ -78,18 +95,11 @@ def tif_to_jpeg(
 
 @click.command()
 @click.option(
-    "-l",
-    "--labels-path",
-    type=click.Path(file_okay=True, resolve_path=True, path_type=Path),
+    "-i",
+    "--image-base-path",
+    type=click.Path(file_okay=False, resolve_path=True, path_type=Path),
     required=True,
-    help="Path to existing labels.",
-)
-@click.option(
-    "-tl",
-    "--to-label-path",
-    type=click.Path(file_okay=True, resolve_path=True, path_type=Path),
-    required=True,
-    help="Path to list ok image to label.",
+    help="Path to all images.",
 )
 @click.option(
     "-r",
@@ -106,6 +116,13 @@ def tif_to_jpeg(
     help="Path to parsed water data.",
 )
 @click.option(
+    "-tl",
+    "--to-label-path",
+    type=click.Path(file_okay=True, resolve_path=True, path_type=Path),
+    required=True,
+    help="Path to list ok image to label.",
+)
+@click.option(
     "-s",
     "--save-dir",
     type=click.Path(file_okay=False, resolve_path=True, path_type=Path),
@@ -120,10 +137,10 @@ def tif_to_jpeg(
     help="Minimum segment length in days.",
 )
 def main(
-    labels_path: Path,
-    to_label_path: Path,
+    image_base_path: Path,
     regions_path: Path,
     water_data_path: Path,
+    to_label_path: Path,
     save_dir: Path,
     min_segment_length: int,
 ):
@@ -131,19 +148,14 @@ def main(
     regions_gdf = regions_gdf[~regions_gdf.skipped].copy()
     regions_gdf = regions_gdf.set_index("region")
 
-    labels = pd.read_csv(labels_path)
-    labels["acquired"] = pd.to_datetime(labels["acquired"], errors="coerce")
-    labels = labels.sort_values(by=["region", "acquired"])
-    labels = labels[(~labels["acquired"].isna())].copy()
-
     to_label = pd.read_csv(to_label_path)
-    to_label["acquired"] = pd.to_datetime(to_label["acquired"], errors="coerce")
+    to_label["acquired"] = pd.to_datetime(to_label["acquired"], errors="coerce", utc=True)
     to_label = to_label.sort_values(by=["region", "acquired"])
     to_label = to_label[(~to_label["acquired"].isna())].copy()
 
     water_to_label = []
 
-    for region, _ in regions_gdf.iterrows():
+    for region, _ in tqdm.tqdm(regions_gdf.iterrows(), total=len(regions_gdf)):
         region_water_data_dir = water_data_path / str(region)
         if not region_water_data_dir.exists():
             continue
@@ -151,9 +163,10 @@ def main(
         region_segments = []
         for p in region_water_data_dir.glob("*.csv"):
             df = pd.read_csv(p, dtype={"sensor_id": "string", "source": "string"})
-            for _, sdf in df.groupby("sensor_id"):
+            for _, sdf in df.groupby(["sensor_id", "source"]):
                 segments = contiguous_segments(sdf, time_col="timestamp_utc")
                 region_segments.extend(segments)
+
         if len(region_segments) == 0:
             continue
 
@@ -174,17 +187,24 @@ def main(
             start_dt = acquired - delta
             end_dt = acquired + delta
 
-            base = (
-                Path("/Volumes/x10pro/estuary/ca_all/")
-                / instrument
-                / "results"
-                / str(year)
-                / str(month)
-                / str(region)
-                / "files"
-            )
+            # No month for skysat
+            if instrument == "skysat":
+                base = image_base_path / instrument / "results" / str(year) / str(region) / "files"
+                source_tif = next(
+                    (p for p in base.glob(f"{asset_id}*_pansharpened_clip.tif")), None
+                )
+            else:
+                base = (
+                    image_base_path
+                    / instrument
+                    / "results"
+                    / str(year)
+                    / str(month)
+                    / str(region)
+                    / "files"
+                )
+                source_tif = next((p for p in base.glob(f"{asset_id}*SR*clip.tif")), None)
 
-            source_tif = next((p for p in base.glob(f"{asset_id}*SR*clip.tif")), None)
             if source_tif is None:
                 print("WARNING: Missing tif", instrument, year, month, region)
                 continue
@@ -192,33 +212,34 @@ def main(
             l_segments = [
                 s
                 for s in region_segments
-                if (s.timestamp_utc.min() > start_dt and end_dt < s.timestamp_utc.max())
+                if (s.timestamp_utc.min() < start_dt and end_dt < s.timestamp_utc.max())
             ]
             if not len(l_segments):
                 continue
 
             segment = l_segments[0]
-            # disp_segment = segment[(segment.index > start_dt) & (segment.index < end_dt)]
-            # fig_path = save_dir / "plots" / str(region) / f"{source_tif.stem}.jpeg"
-            # fig_path.parent.mkdir(exist_ok=True, parents=True)
-            # plot_depth_centered_on_event(disp_segment, "height", acquired, fig_path)
+            disp_segment = segment[
+                (segment.timestamp_utc > start_dt) & (segment.timestamp_utc < end_dt)
+            ].set_index("timestamp_utc")
+            fig_path = save_dir / "plots" / str(region) / f"{source_tif.stem}.jpeg"
+            fig_path.parent.mkdir(exist_ok=True, parents=True)
+            plot_depth_centered_on_event(disp_segment, "height", acquired, fig_path)
 
-            # img_path = save_dir / "images" / str(region) / f"{source_tif.stem}.jpeg"
-            # img_path.parent.mkdir(exist_ok=True, parents=True)
-            # tif_to_jpeg(source_tif, img_path)
+            img_path = save_dir / "images" / str(region) / f"{source_tif.stem}.jpeg"
+            img_path.parent.mkdir(exist_ok=True, parents=True)
+            tif_to_jpeg(source_tif, img_path)
 
             water_to_label.append(
                 {
                     "region": region,
-                    # "orig_label": label_row["label"],
                     "source_tif": source_tif,
                     "seg_source": segment.source.iloc[0],
-                    # "img_path": img_path,
-                    # "fig_path": fig_path,
+                    "img_path": img_path,
+                    "fig_path": fig_path,
                 }
             )
 
-    pd.DataFrame(water_to_label).to_csv(save_dir / "water_to_label.csv", index=False)
+    pd.DataFrame(water_to_label).to_csv(save_dir / "to_label.csv", index=False)
 
     print("Done!")
 

@@ -19,6 +19,7 @@ from torchmetrics.classification import (
     BinaryRecall,
     MulticlassAccuracy,
     MulticlassAUROC,
+    MulticlassCalibrationError,
     MulticlassCohenKappa,
     MulticlassConfusionMatrix,
     MulticlassF1Score,
@@ -89,10 +90,10 @@ class EstuaryModule(LightningModule):
             # Binary metrics operate on probabilities in [0,1]
             metrics_dict = {
                 "f1": BinaryF1Score(),
-                "accuracy": BinaryAccuracy(),
-                "auroc": BinaryAUROC(),
                 "precision": BinaryPrecision(),
                 "recall": BinaryRecall(),
+                "accuracy": BinaryAccuracy(),
+                "auroc": BinaryAUROC(),
             }
             self.train_cm = BinaryConfusionMatrix()
             self.val_cm = BinaryConfusionMatrix()
@@ -106,19 +107,19 @@ class EstuaryModule(LightningModule):
                 "precision": MulticlassPrecision(num_classes=self.num_classes),
                 "recall": MulticlassRecall(num_classes=self.num_classes),
                 "accuracy": MulticlassAccuracy(num_classes=self.num_classes),
-                "cohenkappa": MulticlassCohenKappa(num_classes=self.num_classes),
                 "auroc": MulticlassAUROC(num_classes=self.num_classes),
+                "cohenkappa": MulticlassCohenKappa(num_classes=self.num_classes),
             }
             # per-class precision vector (multiclass only)
-            metrics_dict["precision_perclass"] = MulticlassPrecision(
+            metrics_dict["f1_perclass"] = MulticlassF1Score(
                 num_classes=self.num_classes, average="none"
             )
             self.train_cm = MulticlassConfusionMatrix(num_classes=self.num_classes)
             self.val_cm = MulticlassConfusionMatrix(num_classes=self.num_classes)
             self.test_cm = MulticlassConfusionMatrix(num_classes=self.num_classes)
-            self.train_ece = BinaryCalibrationError()
-            self.val_ece = BinaryCalibrationError()
-            self.test_ece = BinaryCalibrationError()
+            self.train_ece = MulticlassCalibrationError(num_classes=self.num_classes)
+            self.val_ece = MulticlassCalibrationError(num_classes=self.num_classes)
+            self.test_ece = MulticlassCalibrationError(num_classes=self.num_classes)
 
         metrics = MetricCollection(metrics_dict)
         self.train_metrics = metrics.clone(prefix="train/").to(self.device)
@@ -220,17 +221,7 @@ class EstuaryModule(LightningModule):
             # logits: [B, 1]; targets: int {0,1}
             logits = logits.view(-1)
             target_f = target.float()
-
-            if self.conf.perch_smooth_factor > 1e-4:
-                # If no smooth_factor, will just use 0.
-                label_str = batch["orig_label"]
-                is_hard = torch.tensor(
-                    [a == "perched open" for a in label_str], dtype=torch.bool, device=target.device
-                )
-                eps = torch.where(is_hard, self.conf.perch_smooth_factor, self.conf.smooth_factor)
-                target_f = target_f * (1 - eps) + eps * 0.5
-            elif self.conf.smooth_factor > 1e-4:
-                target_f = target_f * (1 - self.conf.smooth_factor) + 0.5 * self.conf.smooth_factor
+            target_f = target_f * (1 - self.conf.smooth_factor) + 0.5 * self.conf.smooth_factor
 
             loss = self.loss_fn(logits, target_f)
             probs_pos = torch.sigmoid(logits)
@@ -248,11 +239,7 @@ class EstuaryModule(LightningModule):
             loss = self.loss_fn(logits, target)
             metrics.update(logits, target)  # torchmetrics multiclass can accept logits
             cm.update(logits.argmax(dim=1), target)
-
-            # Open ECE assumes index 1 is 'open'
-            assert self.conf.classes.index("open") == 1
-            probs = torch.softmax(logits, dim=1)[:, 1]
-            ece.update(probs, target)
+            ece.update(logits, target)
 
         self.log_dict(
             {f"{train_test_val}/loss": loss},
@@ -279,11 +266,11 @@ class EstuaryModule(LightningModule):
 
         # compute all metrics
         results = metrics.compute()
-        # extract and log per-class precision scalars
-        if f"{train_test_val}/precision_perclass" in results:
-            prec_vals = results.pop(f"{train_test_val}/precision_perclass")
+        # extract and log per-class F1 scalars
+        if f"{train_test_val}/f1_perclass" in results:
+            prec_vals = results.pop(f"{train_test_val}/f1_perclass")
             for idx, cls in enumerate(self.conf.classes):
-                results[f"{train_test_val}/precision_{cls}"] = prec_vals[idx]
+                results[f"{train_test_val}/f1_{cls}"] = prec_vals[idx]
         # log the remaining metrics
         self.log_dict(results, sync_dist=True)
         metrics.reset()
@@ -299,9 +286,9 @@ class EstuaryModule(LightningModule):
         plt.close(fig)
         cm.reset()
 
-        # Log open ECE
+        # Log ECE
         results = ece.compute()
-        self.log_dict({f"{train_test_val}/ece_open": results}, sync_dist=True)
+        self.log_dict({f"{train_test_val}/ece": results}, sync_dist=True)
         ece.reset()
 
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:

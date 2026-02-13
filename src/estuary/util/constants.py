@@ -4,7 +4,7 @@ BAND_NAMES = (
     "Green 1",
     "Green",
     "Yellow",
-    "Red",
+    "Red    ",
     "Red Edge",
     "Near IR",
 )

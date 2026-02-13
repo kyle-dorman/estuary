@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -7,13 +8,15 @@ import geopandas as gpd
 import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 
 def plot_estuaries_ca(
     gdf: gpd.GeoDataFrame,
     column: str | None = None,
+    categorical: bool | None = None,
     *,
-    cmap: str = "viridis",
+    cmap: str | plt.Colormap = "viridis",
     vmin: float | None = None,
     vmax: float | None = None,
     scale: str = "linear",  # "linear" or "log"
@@ -37,7 +40,10 @@ def plot_estuaries_ca(
     """Plot California estuaries on a Cartopy map.
 
     - If `column is None`, plots **locations only** (all points same color).
-    - If `column` is provided, plots points colored by that numeric column.
+    - If `column` is provided, plots points colored by that column.
+      *Numeric columns* use a colorbar (default).
+      *Categorical columns* (strings/ints/classes) use a discrete colormap + legend.
+      You may force categorical behavior via `categorical=True`.
 
     Notes on close/overlapping sites
     -------------------------------
@@ -111,59 +117,159 @@ def plot_estuaries_ca(
     # Colored-by-column mode
     # ------------------------------------------------------------------
     else:
-        data = gdf[column].astype(float)
-        valid = np.isfinite(data)
+        data_raw = gdf[column]
 
-        if vmin is None:
-            vmin = np.nanmin(data)
-        if vmax is None:
-            vmax = np.nanmax(data)
-
-        # Color normalization
-        if bins is not None:
-            norm = colors.BoundaryNorm(bins, ncolors=len(bins) - 1)
-            cmap_obj = plt.get_cmap(cmap, len(bins) - 1)
-        elif scale == "log":
-            assert vmin is not None
-            norm = colors.LogNorm(vmin=max(vmin, 1e-6), vmax=vmax)
-            cmap_obj = plt.get_cmap(cmap)
+        # Decide whether this is numeric or categorical.
+        # - If categorical is explicitly set, obey it.
+        # - Otherwise, attempt numeric coercion and treat as numeric only if most non-null values
+        #       parse.
+        non_null = data_raw.notna()
+        if categorical is None:
+            data_num = pd.to_numeric(data_raw, errors="coerce")
+            denom = int(non_null.sum())
+            frac_parsed = (int(data_num.notna().sum()) / denom) if denom > 0 else 0.0
+            is_categorical = frac_parsed < 0.95
         else:
-            norm = colors.Normalize(vmin=vmin, vmax=vmax)
-            cmap_obj = plt.get_cmap(cmap)
+            is_categorical = bool(categorical)
+            data_num = pd.to_numeric(data_raw, errors="coerce") if not is_categorical else None  # type: ignore
 
-        # Plot invalid values in gray
-        if (~valid).any():
-            ax.scatter(
-                x[~valid.to_numpy()],  # type: ignore
-                y[~valid.to_numpy()],  # type: ignore
+        # --------------------------------------------------------------
+        # Categorical mode: discrete colors + legend
+        # --------------------------------------------------------------
+        if is_categorical:
+            # Treat NaNs as invalid
+            valid_mask = data_raw.notna().to_numpy()
+
+            # Categories can be strings or ints; keep stable ordering
+            cats = pd.Index(data_raw[non_null].astype(object).unique()).tolist()
+            # Try to sort for nicer legends; fall back to original order if not sortable
+            try:
+                cats = sorted(cats)
+            except Exception:
+                pass
+
+            cat_to_code: dict[Any, int] = {c: i for i, c in enumerate(cats)}
+            codes = np.full(len(data_raw), -1, dtype=int)
+            for i, v in enumerate(data_raw.astype(object).to_numpy()):
+                if v is None or (isinstance(v, float) and np.isnan(v)):
+                    continue
+                codes[i] = cat_to_code.get(v, -1)
+
+            ncat = max(len(cats), 1)
+            if isinstance(cmap, plt.Colormap):
+                cmap_obj = cmap
+            else:
+                cmap_obj = plt.get_cmap(cmap, ncat)
+            norm = colors.BoundaryNorm(boundaries=np.arange(-0.5, ncat + 0.5, 1), ncolors=ncat)
+
+            # Plot invalid values in gray
+            if (~valid_mask).any():
+                ax.scatter(
+                    x[~valid_mask],
+                    y[~valid_mask],
+                    s=markersize,
+                    color="lightgray",
+                    alpha=point_alpha,
+                    edgecolor="black",
+                    linewidth=0.4,
+                    transform=ccrs.PlateCarree(),
+                    zorder=3,
+                )
+
+            # Plot valid categorical values
+            sc = ax.scatter(
+                x[valid_mask],
+                y[valid_mask],
                 s=markersize,
-                color="lightgray",
+                c=codes[valid_mask],
+                cmap=cmap_obj,
+                norm=norm,
                 alpha=point_alpha,
                 edgecolor="black",
                 linewidth=0.4,
                 transform=ccrs.PlateCarree(),
-                zorder=3,
+                zorder=4,
             )
 
-        # Plot valid values
-        sc = ax.scatter(
-            x[valid.to_numpy()],  # type: ignore
-            y[valid.to_numpy()],  # type: ignore
-            s=markersize,
-            c=data[valid],
-            cmap=cmap_obj,
-            norm=norm,
-            alpha=point_alpha,
-            edgecolor="black",
-            linewidth=0.4,
-            transform=ccrs.PlateCarree(),
-            zorder=4,
-        )
+            # Legend (one handle per category)
+            handles = []
+            labels = []
+            for c in cats:
+                code = cat_to_code[c]
+                handles.append(
+                    plt.Line2D(
+                        [0],
+                        [0],
+                        marker="o",
+                        linestyle="",
+                        markersize=markersize * 0.25,
+                        markerfacecolor=cmap_obj(code),
+                        markeredgecolor="black",
+                        markeredgewidth=0.4,
+                    )
+                )
+                labels.append(str(c))
 
-        # Colorbar
-        if add_colorbar:
-            cbar = plt.colorbar(sc, ax=ax, shrink=0.7, pad=0.02)
-            cbar.set_label(column)
+            ax.legend(handles, labels, title=column, loc="upper right", frameon=True)
+
+        # --------------------------------------------------------------
+        # Numeric mode: continuous colors + colorbar (existing behavior)
+        # --------------------------------------------------------------
+        else:
+            assert data_num is not None
+            data = data_num.astype(float)
+            valid = np.isfinite(data)
+
+            if vmin is None:
+                vmin = float(np.nanmin(data))
+            if vmax is None:
+                vmax = float(np.nanmax(data))
+
+            # Color normalization
+            if bins is not None:
+                norm = colors.BoundaryNorm(bins, ncolors=len(bins) - 1)
+                cmap_obj = plt.get_cmap(cmap, len(bins) - 1)
+            elif scale == "log":
+                assert vmin is not None
+                norm = colors.LogNorm(vmin=max(vmin, 1e-6), vmax=vmax)
+                cmap_obj = plt.get_cmap(cmap)
+            else:
+                norm = colors.Normalize(vmin=vmin, vmax=vmax)
+                cmap_obj = plt.get_cmap(cmap)
+
+            # Plot invalid values in gray
+            if (~valid).any():
+                ax.scatter(
+                    x[~valid.to_numpy()],  # type: ignore
+                    y[~valid.to_numpy()],  # type: ignore
+                    s=markersize,
+                    color="lightgray",
+                    alpha=point_alpha,
+                    edgecolor="black",
+                    linewidth=0.4,
+                    transform=ccrs.PlateCarree(),
+                    zorder=3,
+                )
+
+            # Plot valid values
+            sc = ax.scatter(
+                x[valid.to_numpy()],  # type: ignore
+                y[valid.to_numpy()],  # type: ignore
+                s=markersize,
+                c=data[valid],
+                cmap=cmap_obj,
+                norm=norm,
+                alpha=point_alpha,
+                edgecolor="black",
+                linewidth=0.4,
+                transform=ccrs.PlateCarree(),
+                zorder=4,
+            )
+
+            # Colorbar
+            if add_colorbar:
+                cbar = plt.colorbar(sc, ax=ax, shrink=0.7, pad=0.02)
+                cbar.set_label(column)
 
     # Labels (optional)
     if show_labels:
@@ -188,9 +294,9 @@ def plot_estuaries_ca(
     if created_ax:
         if save_path is not None:
             save_path.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(save_path, dpi=300, bbox_inches="tight")
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")  # type: ignore
 
         if show:
             plt.show()
         else:
-            plt.close(fig)
+            plt.close(fig)  # type: ignore

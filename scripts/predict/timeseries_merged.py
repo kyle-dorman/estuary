@@ -1,11 +1,13 @@
 import os
 from pathlib import Path
+from typing import Any
 
 import click
 import numpy as np
 import pandas as pd
-from sklearn.metrics import precision_score, recall_score
+import tqdm
 
+from estuary.model.config import CLASSES
 from estuary.util.data import parse_dt_from_pth
 
 
@@ -40,19 +42,71 @@ def grouped_source_tif(df: pd.DataFrame) -> str:
     return clean_df.iloc[0]["source_tif"]
 
 
+def weights_mean(df: pd.DataFrame, key: str, weight_key: str) -> float:
+    """Compute a weighted mean of `df[key]` using weights derived from `weight_key`.
+
+    We interpret `df[weight_key]` as an *uncertainty* (higher = worse), so the weight is
+    `w = 1 - df[weight_key]`. Values with NaNs in either column are ignored.
+
+    Returns NaN if no valid weights exist or if the total weight is zero.
+    """
+    x = pd.to_numeric(df[key], errors="coerce")
+    w = 1.0 - pd.to_numeric(df[weight_key], errors="coerce")
+
+    m = x.notna() & w.notna()
+    if not m.any():
+        return float("nan")
+
+    x = x[m]
+    w = w[m]
+
+    # Clamp weights into [0, 1] to avoid negative weights from bad inputs
+    w = w.clip(lower=0.0, upper=1.0)
+
+    wsum = float(w.sum())
+    if wsum <= 0:
+        return float("nan")
+
+    return float((x * w).sum() / wsum)
+
+
 def grouped_prediction(
-    df: pd.DataFrame, threshold: float, threshold_unsure: float
-) -> tuple[int, int, float]:
+    df: pd.DataFrame, threshold_unsure: float, classes: list[str]
+) -> dict[str, Any]:
     clean_df = df[df.y_prob_unsure < threshold_unsure]
 
     if len(clean_df) == 0:
-        return -1, 1, 0.0
+        return {"y_pred_unsure": 1}
+    elif len(clean_df) == 1:
+        row = clean_df.iloc[0]
+        out = {"y_pred": row.y_pred, "openness": row.openness, "y_pred_unsure": 0}
+        for cls in classes:
+            cls = cls.replace(" ", "_")
+            key = f"p_{cls}"
+            out[key] = row[key]
+        return out
 
-    # Weight the predicitons by the model quality predictions
-    avg_y_prob = np.average(clean_df["y_prob"], weights=clean_df["y_prob_unsure"]).item()
-    y_true = int(avg_y_prob > threshold)
+    out: dict[str, Any] = {"y_pred_unsure": 0}
 
-    return y_true, 0, avg_y_prob
+    scores = []
+    for cls in classes:
+        cls = cls.replace(" ", "_")
+        key = f"p_{cls}"
+        score = weights_mean(clean_df, key, "y_prob_unsure")
+        scores.append(score)
+
+    # Normalize scores
+    row_sum = np.nansum(scores, keepdims=True)
+    scores_norm = np.array(scores) / row_sum
+    for i, cls in enumerate(classes):
+        cls = cls.replace(" ", "_")
+        key = f"p_{cls}"
+        out[key] = scores_norm[i]
+
+    out["openness"] = weights_mean(clean_df, "openness", "y_prob_unsure")
+    out["y_pred"] = np.argmax(scores)
+
+    return out
 
 
 def region_balanced_metric(
@@ -85,105 +139,92 @@ def region_balanced_metric(
     type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),
     required=True,
 )
-@click.option("--threshold", type=float, default=0.5)
 @click.option("--threshold-unsure", type=float, default=0.5)
 def main(
     preds_path: Path,
-    threshold: float,
     threshold_unsure: float,
 ):
     save_path = preds_path.parent / f"merged_{preds_path.name}"
 
     results = pd.read_csv(preds_path)
     results["acquired"] = results["source_tif"].apply(lambda p: parse_dt_from_pth(Path(p)))
-    results["date"] = results["acquired"].dt.date
-
-    # # Filter on planet clear filter first
-    # stats_df = pd.read_parquet("/Volumes/x10pro/estuary/ca_all/data_stats_simple.parquet")
-    # stats_df["region"] = stats_df["region"].astype(np.int32)
-    # results = results.merge(
-    #     stats_df[stats_df.udm_mean_1 < 0.8][["region", "asset_id"]],
-    #     on=["region", "asset_id"],
-    #     how="inner",
-    # )
+    results["date"] = results["acquired"].dt.date  # type: ignore
 
     merged_results = []
-    for region, rdf in results.groupby("region"):
+    for region, rdf in tqdm.tqdm(results.groupby("region"), total=len(results.region.unique())):
         for date, ddf in rdf.groupby("date"):
             y_true, y_true_unsure = grouped_label(ddf)
-            y_pred, y_pred_unsure, y_prob = grouped_prediction(ddf, threshold, threshold_unsure)
+            pred = grouped_prediction(ddf, threshold_unsure, list(CLASSES))
 
-            merged_results.append(
-                {
-                    "region": region,
-                    "date": date,
-                    "y_true": y_true,
-                    "y_true_unsure": y_true_unsure,
-                    "y_pred": y_pred,
-                    "y_prob": y_prob,
-                    "y_pred_unsure": y_pred_unsure,
-                    "acquired": ddf.acquired.mean(),
-                    "source_tif": grouped_source_tif(ddf),
-                }
-            )
+            out = {
+                "region": region,
+                "date": date,
+                "y_true": y_true,
+                "y_true_unsure": y_true_unsure,
+                "acquired": ddf.acquired.mean(),
+                "source_tif": grouped_source_tif(ddf),
+            }
+            out.update(pred)
+
+            merged_results.append(out)
 
     merged_df = pd.DataFrame(merged_results)
 
-    # Metrics for data quality filter
-    print("Merged Results")
+    # # Metrics for data quality filter
+    # print("Merged Results")
 
-    unsure_recall = recall_score(merged_df.y_true_unsure, merged_df.y_pred_unsure)
-    print("Unsure Recall:", round(unsure_recall, 3))  # type: ignore
-    unsure_precision = precision_score(merged_df.y_true_unsure, merged_df.y_pred_unsure)
-    print("Unsure Precision:", round(unsure_precision, 3))  # type: ignore
+    # unsure_recall = recall_score(merged_df.y_true_unsure, merged_df.y_pred_unsure)
+    # print("Unsure Recall:", round(unsure_recall, 3))  # type: ignore
+    # unsure_precision = precision_score(merged_df.y_true_unsure, merged_df.y_pred_unsure)
+    # print("Unsure Precision:", round(unsure_precision, 3))  # type: ignore
 
-    unsure_recall_region = region_balanced_metric(
-        merged_df, "y_true_unsure", "y_pred_unsure", recall_score
-    )
-    print("Unsure Recall (region-balanced):", round(unsure_recall_region, 3))  # type: ignore
+    # unsure_recall_region = region_balanced_metric(
+    #     merged_df, "y_true_unsure", "y_pred_unsure", recall_score
+    # )
+    # print("Unsure Recall (region-balanced):", round(unsure_recall_region, 3))  # type: ignore
 
-    unsure_precision_region = region_balanced_metric(
-        merged_df, "y_true_unsure", "y_pred_unsure", precision_score
-    )
-    print("Unsure Precision (region-balanced):", round(unsure_precision_region, 3))  # type: ignore
+    # unsure_precision_region = region_balanced_metric(
+    #     merged_df, "y_true_unsure", "y_pred_unsure", precision_score
+    # )
+    # print("Unsure Precision (region-balanced):", round(unsure_precision_region, 3))  # type: ignore
 
-    # Metrics for only known good data
-    open_df = merged_df[merged_df.y_true_unsure == 0].copy()
-    open_df["y_true"] = (open_df.y_true == 1).astype(np.int32)
-    open_df["y_pred"] = (open_df.y_pred == 1).astype(np.int32)
+    # # Metrics for only known good data
+    # open_df = merged_df[merged_df.y_true_unsure == 0].copy()
+    # open_df["y_true"] = (open_df.y_true == 1).astype(np.int32)
+    # open_df["y_pred"] = (open_df.y_pred == 1).astype(np.int32)
 
-    open_recall = recall_score(open_df.y_true, open_df.y_pred)
-    print("Open Recall:", round(open_recall, 3))  # type: ignore
-    open_precision = precision_score(open_df.y_true, open_df.y_pred)
-    print("Open Precision:", round(open_precision, 3))  # type: ignore
+    # open_recall = recall_score(open_df.y_true, open_df.y_pred)
+    # print("Open Recall:", round(open_recall, 3))  # type: ignore
+    # open_precision = precision_score(open_df.y_true, open_df.y_pred)
+    # print("Open Precision:", round(open_precision, 3))  # type: ignore
 
-    open_recall_region = region_balanced_metric(open_df, "y_true", "y_pred", recall_score)
-    print("Open Recall (region-balanced):", round(open_recall_region, 3))  # type: ignore
+    # open_recall_region = region_balanced_metric(open_df, "y_true", "y_pred", recall_score)
+    # print("Open Recall (region-balanced):", round(open_recall_region, 3))  # type: ignore
 
-    open_precision_region = region_balanced_metric(open_df, "y_true", "y_pred", precision_score)
-    print("Open Precision (region-balanced):", round(open_precision_region, 3))  # type: ignore
+    # open_precision_region = region_balanced_metric(open_df, "y_true", "y_pred", precision_score)
+    # print("Open Precision (region-balanced):", round(open_precision_region, 3))  # type: ignore
 
-    # Merge predictions (both must be correct)
-    merged_df["y_true_total"] = ((merged_df.y_true == 1) & (merged_df.y_true_unsure == 0)).astype(
-        np.int32
-    )
-    merged_df["y_pred_total"] = ((merged_df.y_pred == 1) & (merged_df.y_pred_unsure == 0)).astype(
-        np.int32
-    )
-    total_recall = recall_score(merged_df.y_true_total, merged_df.y_pred_total)
-    print("Total Recall:", round(total_recall, 3))  # type: ignore
-    total_precision = precision_score(merged_df.y_true_total, merged_df.y_pred_total)
-    print("Total Precision:", round(total_precision, 3))  # type: ignore
+    # # Merge predictions (both must be correct)
+    # merged_df["y_true_total"] = ((merged_df.y_true == 1) & (merged_df.y_true_unsure == 0)).astype(
+    #     np.int32
+    # )
+    # merged_df["y_pred_total"] = ((merged_df.y_pred == 1) & (merged_df.y_pred_unsure == 0)).astype(
+    #     np.int32
+    # )
+    # total_recall = recall_score(merged_df.y_true_total, merged_df.y_pred_total)
+    # print("Total Recall:", round(total_recall, 3))  # type: ignore
+    # total_precision = precision_score(merged_df.y_true_total, merged_df.y_pred_total)
+    # print("Total Precision:", round(total_precision, 3))  # type: ignore
 
-    total_recall_region = region_balanced_metric(
-        merged_df, "y_true_total", "y_pred_total", recall_score
-    )
-    print("Total Recall (region-balanced):", round(total_recall_region, 3))  # type: ignore
+    # total_recall_region = region_balanced_metric(
+    #     merged_df, "y_true_total", "y_pred_total", recall_score
+    # )
+    # print("Total Recall (region-balanced):", round(total_recall_region, 3))  # type: ignore
 
-    total_precision_region = region_balanced_metric(
-        merged_df, "y_true_total", "y_pred_total", precision_score
-    )
-    print("Total Precision (region-balanced):", round(total_precision_region, 3))  # type: ignore
+    # total_precision_region = region_balanced_metric(
+    #     merged_df, "y_true_total", "y_pred_total", precision_score
+    # )
+    # print("Total Precision (region-balanced):", round(total_precision_region, 3))  # type: ignore
 
     # # Merge predictions (both must be correct)
     # results["y_true_total"] = ((results.y_true == 1) & (results.y_true_unsure == 0)).astype(

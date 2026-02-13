@@ -12,8 +12,8 @@ from tqdm import tqdm
 POINT_RADIUS_KEYS = ["radius_m", "radius", "r_m"]
 
 
-INPUT_DIR = Path("/Volumes/x10pro/estuary/recropped")
-OUTPUT_DIR = Path("/Volumes/x10pro/estuary/recropped_rect")
+INPUT_DIR = Path("/Volumes/x10pro/estuary/new_grids_circ")
+OUTPUT_DIR = Path("/Volumes/x10pro/estuary/new_grids")
 
 # ----------------- Helpers ---------------------------------------------------
 

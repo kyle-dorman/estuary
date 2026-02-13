@@ -121,7 +121,7 @@ def create_splits(
         df_test = df[df.region.isin(region_splits[region_splits.is_test].index)].copy()
     elif conf.split_method == "yearly":
         # Yearly split: require val_year and test_year, and split by year column
-        df["year"] = df["acquired"].dt.year
+        df["year"] = df["acquired"].dt.year  # type: ignore
         if conf.val_year is None or conf.test_year is None:
             raise ValueError("yearly split requires conf.val_year and conf.test_year")
         df_val = df[df["year"] == conf.val_year].copy()
@@ -187,7 +187,7 @@ def load_tif(pth: Path, config: EstuaryConfig) -> tuple[np.ndarray, tuple[float,
         nodata = src.read_masks(1) == 0
 
         if nodata.all():
-            img = np.zeros((*nodata.shape, 3), dtype=np.uint8)
+            img = np.zeros((3, *nodata.shape), dtype=np.uint8)
 
         else:
             bands = config.bands.band_order(len(data))
@@ -258,9 +258,9 @@ class EstuaryDataset(Dataset):
         )
 
     def denormalize(self, x: torch.Tensor) -> torch.Tensor:
-        return K.Denormalize(mean=self.norm_stats.mean.tolist(), std=self.norm_stats.std.tolist())(
-            x
-        )
+        mean = self.norm_stats.mean.tolist()
+        std = self.norm_stats.std.tolist()
+        return K.Denormalize(mean=mean, std=std)(x)
 
     def __len__(self) -> int:
         if self.conf.debug:

@@ -8,7 +8,6 @@ annotation is used. Assumes tasks were created with `meta.source_tif`.
 """
 
 import os
-import shutil
 from pathlib import Path
 
 import click
@@ -38,13 +37,6 @@ def extract_label(task: dict) -> str | None:
     help="Directory with label studio projects.",
 )
 @click.option(
-    "-rd",
-    "--regions-dir",
-    type=click.Path(file_okay=False, resolve_path=True, path_type=Path),
-    required=False,
-    help="Directory under which region geojsons are stored.",
-)
-@click.option(
     "--out", required=True, type=click.Path(writable=True, path_type=Path), help="Output .csv file."
 )
 @click.option(
@@ -53,43 +45,63 @@ def extract_label(task: dict) -> str | None:
     show_default=True,
     help="Label Studio base URL.",
 )
-def main(labeling_dir: Path, out: Path, regions_dir: Path | None, ls_url: str):
+def main(labeling_dir: Path, out: Path, ls_url: str):
     # Must set env key LABEL_STUDIO_API_KEY
     ls = LabelStudio(base_url=ls_url)
 
     rows = []
-    dirs = list(labeling_dir.iterdir())
-    if regions_dir is not None:
-        valid_regions = set(int(p.stem) for p in regions_dir.glob("*.geojson"))
-    else:
-        valid_regions = None
+    dirs = [pdir for pdir in labeling_dir.iterdir() if pdir.is_dir()]
 
     for pdir in tqdm(dirs):
-        if not pdir.is_dir():
-            continue
         project_id = int(pdir.stem)
         project = ls.projects.get(project_id)
         assert project.id is not None
         tasks = ls.projects.exports.as_json(project.id)
 
         if not tasks:
-            click.echo("No labeled tasks found.")
+            click.echo(f"No labeled tasks found for project {project.id}.")
             return
 
+        click.echo(f"Found {len(tasks)} tasks for project {project.id}")
         for task in tasks:
             label = extract_label(task)
             if not label:
                 continue
+
             # meta may be stored at top-level or nested under data
             meta = task.get("data", {}).get("meta") or {}
             region = int(meta["region"])
-            if valid_regions is not None and int(region) not in valid_regions:
-                continue
-            source_tif = Path(meta["source_tif"])
-            acquired = parse_dt_from_pth(source_tif)
-            instrument = "skysat" if "skysat" in str(source_tif) else source_tif.parents[5].name
+            source_tif = str(meta["source_tif"])
+            acquired = parse_dt_from_pth(Path(source_tif))
+            if "skysat" in source_tif:
+                instrument = "skysat"
+            elif "superdove" in source_tif:
+                instrument = "superdove"
+            else:
+                instrument = "dove"
 
-            if instrument == "skysat" or source_tif.exists():
+            if "sat_data" in source_tif:
+                pass
+            elif "ca_all" in source_tif:
+                source_tif = source_tif.replace("ca_all", "sat_data")
+            elif "low_quality" in source_tif:
+                source_tif = source_tif.replace("low_quality", "sat_data")
+            else:
+                source_tif = source_tif.replace("/dove", "/sat_data/dove")
+                source_tif = source_tif.replace("/superdove", "/sat_data/superdove")
+                source_tif = source_tif.replace("/skysat", "/sat_data/skysat")
+
+            source_tif_path = Path(source_tif)
+
+            if instrument == "skysat":
+                asset_id = source_tif_path.name.split("_pansharpened_")[0]
+            else:
+                asset_id = source_tif_path.name.split("_3B_")[0]
+
+            if not source_tif_path.exists():
+                print("WARN", source_tif_path, "doesn't exist")
+
+            if instrument == "skysat" or source_tif_path.exists():
                 rows.append(
                     {
                         "region": region,
@@ -97,31 +109,11 @@ def main(labeling_dir: Path, out: Path, regions_dir: Path | None, ls_url: str):
                         "label": label,
                         "acquired": acquired,
                         "instrument": instrument,
+                        "year": acquired.year,
+                        "month": acquired.month,
+                        "asset_id": asset_id,
                     }
                 )
-                continue
-
-            possible_paths = [
-                Path(str(source_tif).replace("ca_all", "low_quality")),
-                Path(str(source_tif).replace("/superdove", "/low_quality/superdove")),
-                Path(str(source_tif).replace("/dove", "/low_quality/dove")),
-            ]
-
-            for pp in possible_paths:
-                if pp.exists():
-                    shutil.copy(pp, source_tif)
-
-                    rows.append(
-                        {
-                            "region": region,
-                            "source_tif": source_tif,
-                            "label": label,
-                            "acquired": acquired,
-                            "instrument": instrument,
-                        }
-                    )
-                    break
-
     if not rows:
         click.echo("No labels extracted.")
         return

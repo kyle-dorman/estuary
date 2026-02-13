@@ -43,7 +43,7 @@ def run_one(region: str, year: int, month: int, dove: str) -> list[dict[str, Any
     out: list[dict[str, Any]] = []
 
     search_json_path = (
-        Path(f"/Volumes/x10pro/estuary/ca_all/{dove}/results")
+        Path(f"/Volumes/x10pro/estuary/sat_data/{dove}/results")
         / str(year)
         / str(month)
         / str(region)
@@ -143,7 +143,7 @@ def run_one(region: str, year: int, month: int, dove: str) -> list[dict[str, Any
             props = dict(d.get("properties", {}))
             props["asset_id"] = asset_id
             props["year"] = year
-            props["dove"] = dove
+            props["instrument"] = dove
             props["month"] = month
             props["region"] = region
             props["base"] = base

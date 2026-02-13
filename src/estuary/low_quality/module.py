@@ -56,6 +56,7 @@ def load_encorder_from_path(conf: QualityConfig, num_classes: int) -> nn.Module:
         compile=False,
         drop_path=conf.drop_path,
         dropout=conf.dropout,
+        weights_only=False,
         strict=False,
     )
     model: TimmModel = module.model  # type: ignore

@@ -14,8 +14,8 @@ PREFETCH=2
 # drop_path=0.2
 
 uv run --env-file .env scripts/train/train.py \
-    data="/Users/kyledorman/data/estuary/dataset/open_closed.csv" \
-    normalization_path="/Users/kyledorman/data/estuary/dataset/normalization_no_power/stats.json" \
+    data="/Users/kyledorman/data/estuary/dataset/train.csv" \
+    normalization_path="/Users/kyledorman/data/estuary/dataset/normalization/stats.json" \
     epochs=25 \
     debug=${DEBUG} \
     batch_size=${BATCH_SIZE} \
@@ -24,9 +24,7 @@ uv run --env-file .env scripts/train/train.py \
     prefetch_factor=${PREFETCH} \
     split_method="yearly" \
     val_year=2021 \
-    test_year=2024 \
+    test_year=2025 \
     use_class_weights=true \
     aug_level="split" \
-    train_size=384 \
-    val_size=384 \
     ;

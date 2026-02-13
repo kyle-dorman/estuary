@@ -321,13 +321,13 @@ def main(
     regions_gdf = regions_gdf[(~regions_gdf.skipped) & (~regions_gdf.siteid.isna())].copy()
     regions_gdf = regions_gdf.set_index("region")
 
-    # "/Volumes/x10pro/estuary/ca_all/empa/logger-raw-publish.csv"
+    # "/Volumes/x10pro/estuary/water_data/raw/empa/logger-raw-publish.csv"
     raw_water_data = load_raw_logger_data(raw_water_logs_path)
 
-    # "/Volumes/x10pro/estuary/ca_all/empa/emailed_water_data.csv"
+    # "/Volumes/x10pro/estuary/water_data/raw/empa/emailed_water_data.csv"
     emailed_water_data = load_emailed_logger_data(emailed_water_logs_path)
 
-    # "/Volumes/x10pro/estuary/ca_all/empa/logger-raw-depth-correction-publish.csv"
+    # "/Volumes/x10pro/estuary/water_data/raw/empa/logger-raw-depth-correction-publish.csv"
     corrected_water_data = load_corrected_water_data(corrected_water_logs_path)
 
     base_columns = [

@@ -5,7 +5,7 @@ from pathlib import Path
 from estuary.util.bands import Bands
 from estuary.util.config import AugmentConfig
 
-CLASSES = ("closed", "open")
+CLASSES = ("closed", "perched open", "open")
 
 
 # ModelType Enum for selecting model type
@@ -95,7 +95,6 @@ class EstuaryConfig:
     focal_gamma: float = 2.0
     focal_alpha: float = 0.25
     smooth_factor: float = 0.0
-    perch_smooth_factor: float = 0.0
     monitor_metric: str = "val/f1"
     monitor_mode: str = "max"
 

@@ -1,76 +1,31 @@
 #!/usr/bin/env python
 import base64
-import gc
 import json
-import sys
-import time
 from pathlib import Path
+from time import sleep
+from typing import Any
 
 import click
 import numpy as np
+import pandas as pd
 import tqdm
 from label_studio_sdk import LabelStudio
 from PIL import Image
 
-from estuary.model.data import parse_dt_from_pth
 from estuary.util.img import tif_to_rgb
 
-"""
-create_tasks.py
 
-Discover GeoTIFF scenes in the estuary data hierarchy, sample *N* random
-*_SR_clip.tif files **per region**, convert them to RGB JPEGs, and upload the
-resulting tasks to a local Label Studio instance, creating a brand-new project
-on each run.
-
-Directory assumptions
----------------------
-SOURCE: BASE/YEAR/MONTH/REGION/files/*_SR_clip.tif
-TARGET: LABELING_BASE_DIR/<project_id>/   (auto-created)
-
-Each generated task asks the annotator to choose **open / closed / unsure**.
-
-Usage
------
-    python scripts/create_labeling_task.py \
-        --base-dir /data/estuary \
-        --labeling-base-dir /data/label_runs \
-        --ls-url http://localhost:8080 \
-        --ls-token <YOUR_API_TOKEN>
-
-Environment
------------
-* `LABEL_STUDIO_API_KEY` must be set.
-"""
+def task_created(tasks: list[dict], source_tif: Path, region: int) -> bool:
+    return any(task_path_matches(t, source_tif, region) for t in tasks)
 
 
-# --------------------------------------------------------------------------- #
-#                               Helper functions                              #
-# --------------------------------------------------------------------------- #
-
-
-def regions_tifs(base_dir: Path, valid_regions: set[int]) -> dict[int, list[Path]]:
-    """Walk BASE/SAT/YEAR/MONTH/REGION/files/*_SR_clip.tif and return
-    [(region_name, [tif, tif, ...]), ...]
-    """
-    if base_dir.parent.name == "skysat":
-        glob_str = "*/*/files/*_pansharpened_clip.tif"
-    else:
-        glob_str = "*/*/*/*/*/files/*_SR*clip.tif"
-
-    regions = {}
-    for tif in base_dir.glob(glob_str):
-        # e.g. base/2024/06/my_region/files/scene_SR_clip.tif --> "my_region"
-        region = int(tif.parents[1].name)
-        if region not in valid_regions:
-            continue
-        regions.setdefault(region, []).append(tif)
-
-    for k in regions.keys():
-        regions[k] = sorted(regions[k], key=lambda p: parse_dt_from_pth(p))
-
-    keys = sorted(list(regions.keys()))
-    return {k: regions[k] for k in keys}
+def task_path_matches(task: dict[str, dict[str, Any]], source_tif: Path, region: int) -> bool:
+    task_meta = task.get("meta", {})
+    task_path = task_meta.get("source_tif")
+    task_region = task_meta.get("region")
+    assert task_path is not None, task["meta"]
+    assert task_region is not None
+    return Path(task_path).stem == source_tif.stem and region == int(task_region)
 
 
 def tif_to_jpeg(
@@ -96,25 +51,52 @@ def image_to_datauri(jpeg_path: Path) -> str:
 def build_label_config() -> str:
     """XML view with three classification labels."""
     return """
-<View style="display: flex;">
-  <View style="padding: 0em 1em; margin-right: 1em; border-radius: 3px">
-    <View style="position: sticky; top: 0">
-    <Choices
+<View style="display:flex; flex-direction:column; height:100vh; width:70vw; margin:0; padding:0;">
+  <!-- Main content row -->
+  <View style="flex:1; display:flex; flex-direction:row; min-height:0;">
+    <!-- LEFT: title + image -->
+    <View style="flex:1; display:flex; flex-direction:column; min-height:0; padding:8px 16px;">
+      <!-- Title -->
+      <View style="font-size:22px; font-weight:700; margin-bottom:6px;">
+        <Text name="meta_text" value="Region: $region | Date: $date" />
+      </View>
+
+      <!-- Image -->
+      <View style="flex:1; min-height:0;">
+        <Image
+          name="image"
+          value="$image"
+          rotateControl="false"
+          zoomControl="true"
+          style="width:100%; height:100%; object-fit:contain;"
+        />
+      </View>
+    </View>
+    <!-- RIGHT: vertical choices -->
+    <View
+      style="
+        width:220px;
+        padding:12px;
+        border-left:1px solid #eee;
+        position:sticky;
+        top:0;
+        align-self:flex-start;
+      "
+    >
+      <Choices
         name="label"
         toName="image"
         choice="single-radio"
-        showInline="true"
         required="true"
-        layout="inline"
-    >
-      <Choice value="closed" hotkey="a"/>
-      <Choice value="open" hotkey="s"/>
-      <Choice value="perched open" hotkey="d"/>
-      <Choice value="unsure" hotkey="f"/>
-    </Choices>
+        layout="vertical"
+      >
+        <Choice value="closed" hotkey="a"/>
+        <Choice value="open" hotkey="s"/>
+        <Choice value="perched open" hotkey="d"/>
+        <Choice value="unsure" hotkey="f"/>
+      </Choices>
     </View>
   </View>
-  <Image name="image" value="$image" rotateControl="false"/>
 </View>
 """.strip()
 
@@ -140,17 +122,23 @@ def build_label_config() -> str:
     help="Directory under which JPEGs + tasks.json will be stored.",
 )
 @click.option(
-    "-rd",
-    "--regions-dir",
-    type=click.Path(file_okay=False, resolve_path=True, path_type=Path),
+    "-t",
+    "--to-label-path",
+    type=click.Path(file_okay=True, resolve_path=True, path_type=Path),
     required=True,
-    help="Directory under which region geojsons are stored.",
+    help="CSV of files to label.",
 )
 @click.option(
-    "--region",
-    type=int,
+    "--single-project",
+    is_flag=True,
+    default=False,
+    help="Upload all regions into a single Label Studio project instead of project per region",
+)
+@click.option(
+    "--title",
+    type=str,
     required=False,
-    help="Filter to a single region",
+    help="Name of labeling project.",
 )
 @click.option(
     "--ls-url",
@@ -161,73 +149,108 @@ def build_label_config() -> str:
 def main(
     base_dir: Path,
     labeling_base_dir: Path,
-    regions_dir: Path,
-    region: int | None,
+    to_label_path: Path,
+    single_project: bool,
+    title: str | None,
     ls_url: str,
 ) -> None:
     """Create a new Label Studio project and populate it with classification tasks."""
     labeling_base_dir.mkdir(exist_ok=True, parents=True)
 
-    click.echo(f"Scanning regions under {base_dir} …")
-    valid_regions = set(int(p.stem) for p in regions_dir.glob("*.geojson"))
-    region_items = regions_tifs(base_dir, valid_regions)
-    if region is not None:
-        region_items = {k: v for k, v in region_items.items() if k == region}
-    if not region_items:
-        click.echo("No regions found!", err=True)
-        sys.exit(1)
+    to_label = pd.read_csv(to_label_path)
+    to_label["acquired"] = pd.to_datetime(to_label["acquired"], errors="coerce", utc=True)
+    to_label = to_label.sort_values(by=["region", "acquired"])
 
     # Connect to Label Studio ---------------------------------------------- #
     client = LabelStudio(base_url=ls_url)
 
     existing_projects = {}
-    region_created_tasks = {}
+    project_created_tasks = {}
     for pdir in labeling_base_dir.iterdir():
         if pdir.is_dir():
             with open(pdir / "tasks.json") as f:
                 tasks = json.load(f)
+                existing_project_id = int(pdir.name)
                 project_region = int(tasks[0]["meta"]["region"])
-                region_created_tasks[project_region] = tasks
-                existing_projects[project_region] = int(pdir.name)
+                project_created_tasks[existing_project_id] = tasks
+                existing_projects[project_region] = existing_project_id
+
+    global_project_id: int | None = None
+    global_tasks: list = [t for ts in project_created_tasks.values() for t in ts]
+
+    if single_project and len(project_created_tasks):
+        global_project_id = int(list(project_created_tasks.keys())[0])  # type: ignore
 
     # Gather samples and convert to JPEGs ----------------------------------- #
-    for run_region in tqdm.tqdm(list(region_items.keys())):
-        gc.collect()
-        time.sleep(0.2)
-        tasks = region_created_tasks.get(run_region, [])
-        created_tasks_count = 0
-        paths = region_items[run_region]
+    for region, rdf in tqdm.tqdm(to_label.groupby("region"), total=len(to_label.region.unique())):
+        is_skysat = "skysat" in rdf["instrument"].unique()
 
-        if run_region in existing_projects:
-            project_id = existing_projects[run_region]
+        if single_project:
+            if global_project_id is None:
+                project_title = title if title is not None else "All Regions"
+                project = client.projects.create(
+                    title=project_title, label_config=build_label_config()
+                )
+                global_project_id = project.id
+            project_id = global_project_id
         else:
-            if "skysat" in str(paths[0]):
-                name = "SS"
+            if region in existing_projects:
+                project_id = existing_projects[region]
             else:
-                name = "Dove All"
-            project_title = f"{name} - {run_region}"
-            project = client.projects.create(title=project_title, label_config=build_label_config())
-            project_id = project.id
+                if is_skysat:
+                    name = "SS"
+                else:
+                    name = "Dove All"
+                project_title = f"{name} - {region}"
+                project = client.projects.create(
+                    title=project_title, label_config=build_label_config()
+                )
+                project_id = project.id
+
+        if single_project:
+            tasks = global_tasks
+        else:
+            tasks = project_created_tasks.get(project_id, [])
 
         out_dir = labeling_base_dir / f"{project_id:05d}"
         out_dir.mkdir(exist_ok=True, parents=True)
 
-        # set up local export storage so annotations land in the same folder
-        client.import_storage.local.create(
-            title="LocalExport", path=str(out_dir), use_blob_urls=False, project=project_id
-        )
-
-        images_dir = out_dir / "images"
+        images_dir = out_dir / "images" / str(region)
         images_dir.mkdir(exist_ok=True, parents=True)
-        for tif_path in paths:
-            matches = [t for t in tasks if Path(t["meta"]["source_tif"]) == tif_path]
-            if len(matches):
+
+        created_tasks_count = 0
+        for _, row in rdf.iterrows():
+            # No month for skysat
+            if is_skysat:
+                base = base_dir / row.instrument / "results" / str(row.year) / str(region) / "files"
+                tif_path: Path | None = next(
+                    (p for p in base.glob(f"{row.asset_id}*_pansharpened_clip.tif")), None
+                )
+            else:
+                base = (
+                    base_dir
+                    / row.instrument
+                    / "results"
+                    / str(row.year)
+                    / str(row.month)
+                    / str(region)
+                    / "files"
+                )
+                tif_path: Path | None = next(
+                    (p for p in base.glob(f"{row.asset_id}*SR*clip.tif")), None
+                )
+
+            if tif_path is None or not Path(tif_path).exists():
+                continue
+
+            if task_created(tasks, tif_path, row["region"]):
                 continue
 
             if tif_path.name.endswith("pansharpened_clip.tif"):
                 jpeg_name = tif_path.stem.replace("_pansharpened_clip", "") + ".jpg"
             else:
                 jpeg_name = tif_path.stem.replace("_SR_clip", "") + ".jpg"
+
             jpeg_path = images_dir / jpeg_name
             tif_to_jpeg(tif_path, jpeg_path)
 
@@ -236,8 +259,10 @@ def main(
 
             task = {
                 "image": image_to_datauri(jpeg_path),
+                "region": row["region"],
+                "date": row["acquired"].strftime("%Y-%m-%d"),
                 "meta": {
-                    "region": run_region,
+                    "region": region,
                     "source_tif": str(tif_path),
                     "source_jpeg": str(jpeg_path),
                 },
@@ -246,20 +271,12 @@ def main(
             client.tasks.create(data=task, project=project_id)
             tasks.append(task)
             created_tasks_count += 1
+
         if created_tasks_count:
-            print("Create", created_tasks_count, "for region", run_region)
+            print("Create", created_tasks_count, "for region", region)
 
-        # # Create all tasks
-        # bulk_url = f"api/projects/{project_id}/tasks/bulk/"
-        # resp = bulk_client.make_request(
-        #     method="POST",
-        #     url=bulk_url,
-        #     json={"tasks": tasks},  # list of dicts
-        # )
-        # resp.raise_for_status()
-
-        # Save tasks.json for reproducibility
         (out_dir / "tasks.json").write_text(json.dumps(tasks, indent=2), encoding="utf-8")
+        sleep(5)
 
 
 if __name__ == "__main__":
