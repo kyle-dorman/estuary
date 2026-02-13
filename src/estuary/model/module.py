@@ -2,7 +2,6 @@ import logging
 
 import kornia.augmentation as K
 import torch
-from claymodel.module import ClayMAEModule
 from lightning.pytorch import LightningModule
 from lightning.pytorch.loggers import TensorBoardLogger
 from matplotlib import pyplot as plt
@@ -28,8 +27,7 @@ from torchmetrics.classification import (
 )
 from torchvision.utils import make_grid
 
-from estuary.clay.classifier import ClayClassifier, ClayConvDecoder, ClayTransformerDecoder
-from estuary.model.config import EstuaryConfig, ModelType
+from estuary.model.config import EstuaryConfig
 from estuary.model.data import load_normalization
 from estuary.model.timm_model import TimmModel
 from estuary.util.nn import FocalLoss
@@ -52,32 +50,7 @@ class EstuaryModule(LightningModule):
         super().__init__()
         self.save_hyperparameters(conf)
 
-        if conf.model_type == ModelType.CLAY:
-            clay_model = ClayMAEModule.load_from_checkpoint(
-                conf.clay_encoder_weights,
-                metadata_path=conf.metadata_path,
-                strict=False,
-                mask_ratio=0.0,
-                shuffle=False,
-            )
-            if conf.freeze_encoder:
-                clay_model = clay_model.eval()
-            encoder = clay_model.model.encoder
-            # Freeze the encoder parameters
-            if conf.freeze_encoder:
-                for param in encoder.parameters():
-                    param.requires_grad = False
-            assert encoder.dim == conf.encoder_dim
-            decoder = (
-                ClayConvDecoder(conf, self.num_classes)
-                if conf.decoder_name == "conv"
-                else ClayTransformerDecoder(conf, self.num_classes)
-            )
-            clf = ClayClassifier(encoder, decoder)
-        elif conf.model_type == ModelType.TIMM:
-            clf = TimmModel(conf, self.num_classes)
-        else:
-            raise RuntimeError(f"Unsupported model_type {conf.model_type}")
+        clf = TimmModel(conf, self.num_classes)
 
         if conf.debug or not conf.compile:
             self.model = clf

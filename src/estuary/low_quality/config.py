@@ -44,14 +44,12 @@ class QualityConfig:
     preview_channels: tuple[int, int, int] = (0, 1, 2)
 
     model_name: str = "convnext_tiny.dinov3_lvd1689m"
-    global_pool: str = "avg"
     pretrained: bool = True
     dropout: float = 0.15
     drop_path: float = 0.1
     freeze_encoder: bool = False
     encoder_checkpoint_path: Path | None = None
-    train_size: int = 224
-    val_size: int = 224
+    img_size: int = 224
     world_size: int = 1
 
     monitor_metric: str = "val/f1"

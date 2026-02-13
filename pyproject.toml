@@ -10,14 +10,11 @@ readme = "README.md"
 requires-python = ">= 3.12"
 dependencies = [
     "cartopy",
-    "claymodel",
     "click",
     "dask",
-    "earthengine-api>=1.6.4",
     "folium",
     "gdal[numpy]",
     "geopandas",
-    "hmmlearn>=0.3.3",
     "huggingface-hub>=0.34.1",
     "imageio[ffmpeg]>=2.37.0",
     "ipywidgets>=8.1.7",
@@ -108,6 +105,3 @@ recursive = true
 experimental = true
 aggressive = 3
 verbose = false
-
-[tool.uv.sources]
-claymodel = { git = "https://github.com/Clay-foundation/model.git" }

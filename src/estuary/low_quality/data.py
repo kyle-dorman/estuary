@@ -97,7 +97,7 @@ def create_splits(
 
     if conf.split_method == "yearly":
         # Yearly split: require val_year and test_year, and split by year column
-        df["year"] = df["acquired"].dt.year
+        df["year"] = df["acquired"].dt.year  # type: ignore
         if conf.val_year is None:
             raise ValueError("yearly split requires conf.val_year")
         df_val = df[df["year"] == conf.val_year].copy()
@@ -217,13 +217,13 @@ class LowQualityDataset(Dataset):
 
         if train:
             self.resize_aug = K.RandomResizedCrop(
-                (self.conf.train_size, self.conf.train_size),
+                (self.conf.img_size, self.conf.img_size),
                 scale=self.conf.aug.scale,
                 resample=Resample.BICUBIC,
             )
         else:
             self.resize_aug = K.Resize(
-                size=(conf.val_size, conf.val_size), resample=Resample.BICUBIC, antialias=True
+                size=(conf.img_size, conf.img_size), resample=Resample.BICUBIC, antialias=True
             )
 
         self.base_augs = K.AugmentationSequential(self.norm, self.resize_aug, data_keys=None)
@@ -285,7 +285,7 @@ class LowQualityDataset(Dataset):
                 border_crop=30,
             ),
             K.Resize(
-                size=(conf.val_size, conf.val_size), resample=Resample.BICUBIC, antialias=True
+                size=(conf.img_size, conf.img_size), resample=Resample.BICUBIC, antialias=True
             ),
         )
 
@@ -305,7 +305,7 @@ class LowQualityDataset(Dataset):
 
         augs.extend(
             [
-                K.Resize(size=(conf.val_size, conf.val_size)),
+                K.Resize(size=(conf.img_size, conf.img_size)),
                 K.Normalize(mean=self.norm_stats.mean.tolist(), std=self.norm_stats.std.tolist()),
             ]
         )

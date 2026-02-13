@@ -223,13 +223,13 @@ class EstuaryDataset(Dataset):
 
         if train:
             self.resize_aug = K.RandomResizedCrop(
-                (self.conf.train_size, self.conf.train_size),
+                (self.conf.img_size, self.conf.img_size),
                 scale=self.conf.aug.scale,
                 resample=Resample.BICUBIC,
             )
         else:
             self.resize_aug = K.Resize(
-                size=(conf.val_size, conf.val_size), resample=Resample.BICUBIC, antialias=True
+                size=(conf.img_size, conf.img_size), resample=Resample.BICUBIC, antialias=True
             )
 
         if self.norm_stats.power_scale:
@@ -252,7 +252,7 @@ class EstuaryDataset(Dataset):
             )
 
         self.transforms = K.AugmentationSequential(
-            K.Resize(size=(conf.val_size, conf.val_size)),
+            K.Resize(size=(conf.img_size, conf.img_size)),
             K.Normalize(mean=self.norm_stats.mean.tolist(), std=self.norm_stats.std.tolist()),
             data_keys=None,
         )
@@ -338,8 +338,6 @@ class EstuaryDataModule(LightningDataModule):
         # verify files exist & readable
         if not self.conf.data.exists():
             raise FileNotFoundError(self.conf.data)
-        if not self.conf.metadata_path.exists():
-            raise FileNotFoundError(self.conf.metadata_path)
 
     def setup(self, stage: str | None = None) -> None:
         if self.train_ds is None or self.val_ds is None or self.test_ds is None:

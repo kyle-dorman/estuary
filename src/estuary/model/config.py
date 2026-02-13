@@ -1,17 +1,10 @@
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 
 from estuary.util.bands import Bands
 from estuary.util.config import AugmentConfig
 
 CLASSES = ("closed", "perched open", "open")
-
-
-# ModelType Enum for selecting model type
-class ModelType(Enum):
-    CLAY = "clay"
-    TIMM = "timm"
 
 
 @dataclass
@@ -49,26 +42,13 @@ class EstuaryConfig:
     preview_n: int = 9
     preview_channels: tuple[int, int, int] = (0, 1, 2)
 
-    model_type: ModelType = ModelType.TIMM
     model_name: str = "convnext_tiny.dinov3_lvd1689m"
     pretrained: bool = True
-    clay_encoder_weights: Path = Path("/Users/kyledorman/data/models/clay/clay-v1.5.ckpt")
-    metadata_path: Path = Path("/Users/kyledorman/data/models/clay/metadata.yaml")
     normalization_path: Path | None = None
-    decoder_name: str = "conv"
     freeze_encoder: bool = False
-    encoder_dim: int = 1024
-    decoder_dim: int = 192
-    decoder_depth: int = 4  # 4 for conv and 3 for attn
-    decoder_heads: int = 2
-    decoder_dim_head: int = 48
-    decoder_mlp_ratio: int = 2
-    global_pool: str = "avg"
-    lse_beta: float = 10.0
     dropout: float = 0.15
     drop_path: float = 0.1
-    train_size: int = 224
-    val_size: int = 224
+    img_size: int = 224
     world_size: int = 1
 
     # Augmentation Params

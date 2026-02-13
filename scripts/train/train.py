@@ -14,8 +14,7 @@ from omegaconf.base import ContainerMetadata
 from rich import get_console
 from rich.table import Column, Table
 
-from estuary.clay.data import ClayEstuaryDataModule
-from estuary.model.config import EstuaryConfig, ModelType
+from estuary.model.config import EstuaryConfig
 from estuary.model.data import EstuaryDataModule, calc_class_weights
 from estuary.model.module import EstuaryModule
 from estuary.util.my_logging import setup_logger
@@ -66,10 +65,7 @@ def main() -> None:
 
     # Load model and data
     model = EstuaryModule(conf)
-    if conf.model_type == ModelType.CLAY:
-        datamodule = ClayEstuaryDataModule(conf)
-    else:
-        datamodule = EstuaryDataModule(conf)
+    datamodule = EstuaryDataModule(conf)
 
     # wandb_logger = WandbLogger(log_model="all", project=conf.project, save_dir=model_dir)
     tensorboard_logger = TensorBoardLogger(model_dir)

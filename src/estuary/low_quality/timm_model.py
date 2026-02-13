@@ -14,9 +14,6 @@ class TimmModel(nn.Module):
         if conf.pretrained:
             assert in_chans == 3, conf.bands
 
-        _timm_pools = {"avg", "max", "avgmax", "catavgmax"}
-        assert conf.global_pool in _timm_pools
-
         self.head = None
         # Let timm configure pooling & classifier in one go
         kwargs = dict(
@@ -26,7 +23,6 @@ class TimmModel(nn.Module):
             num_classes=num_classes,
             drop_rate=conf.dropout,
             drop_path_rate=conf.drop_path,
-            global_pool=conf.global_pool,
         )
         if conf.model_name.startswith("efficientvit"):
             kwargs.pop("drop_path_rate")
