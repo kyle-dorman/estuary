@@ -26,6 +26,13 @@ logger = logging.getLogger(__name__)
 @click.option("--max-std", type=float, default=3.0)
 @click.option("--power-scale", is_flag=True)
 @click.option("--stride", type=int, default=10)
+@click.option(
+    "--skip-year",
+    "skip_years",
+    type=int,
+    multiple=True,
+    help="Year(s) to exclude when computing stats. Can be repeated, e.g. --skip-year 2021 --skip-year 2022",
+)
 def main(
     labels_path: Path,
     save_path: Path,
@@ -34,12 +41,25 @@ def main(
     max_std: float,
     power_scale: bool,
     stride: int,
+    skip_years: tuple[int, ...],
 ):
     logger.info("Calculating normalization statistics")
 
     save_path.mkdir(exist_ok=True, parents=True)
 
     labels = pd.read_csv(labels_path)
+
+    # Optionally filter out specific years (e.g. val/test years) so stats are based only on train years.
+    if skip_years:
+        assert "year" in labels.columns
+
+        skip_set = set(int(y) for y in skip_years)
+        labels = labels[~labels["year"].astype(int).isin(skip_set)].copy()
+
+        count_after = len(labels)
+        logger.info(
+            f"Filtered labels for stats: kept {count_after} rows after skipping years={sorted(skip_set)}"
+        )
 
     rng = np.random.default_rng(seed=42)
 

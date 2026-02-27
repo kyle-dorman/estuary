@@ -18,9 +18,9 @@ echo "Using latest base model checkpoint: $LATEST_CKPT"
 
 uv run --env-file .env scripts/train/train_low_quality.py \
     data="/Users/kyledorman/data/estuary/dataset/cluster_labels.csv" \
-    val_data="/Users/kyledorman/data/estuary/dataset/time_series.csv" \
-    test_data="/Users/kyledorman/data/estuary/dataset/time_series.csv" \
-    normalization_path="/Users/kyledorman/data/estuary/dataset/normalization/stats.json" \
+    val_data="/Users/kyledorman/data/estuary/dataset/low_quality_time_series.csv" \
+    test_data="/Users/kyledorman/data/estuary/dataset/low_quality_time_series.csv" \
+    normalization_path="/Users/kyledorman/data/estuary/dataset/normalization_no_power/stats.json" \
     epochs=${EPOCHS} \
     debug=${DEBUG} \
     batch_size=${BATCH_SIZE} \
@@ -41,8 +41,8 @@ echo "Using latest checkpoint: $LATEST_CKPT"
 
 uv run --env-file .env scripts/train/train_low_quality.py \
     data="/Users/kyledorman/data/estuary/dataset/train.csv" \
-    test_data="/Users/kyledorman/data/estuary/dataset/time_series.csv" \
-    normalization_path="/Users/kyledorman/data/estuary/dataset/normalization/stats.json" \
+    test_data="/Users/kyledorman/data/estuary/dataset/low_quality_time_series.csv" \
+    normalization_path="/Users/kyledorman/data/estuary/dataset/normalization_no_power/stats.json" \
     epochs=${FINE_TUNE_EPOCHS} \
     debug=${DEBUG} \
     batch_size=${BATCH_SIZE} \

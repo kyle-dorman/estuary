@@ -14,7 +14,7 @@ class EstuaryConfig:
     data: Path = Path("/UPDATEME")
     model_training_root: Path = Path("/Users/kyledorman/data/results")
     # How to split train/val/test. One of ["region", "crossval", "yearly"]
-    split_method: str = "region"
+    split_method: str = "yearly"
     region_splits: Path = Path("/UPDATEME")
     cv_folds: int = 0
     cv_index: int = 0
@@ -53,7 +53,7 @@ class EstuaryConfig:
 
     # Augmentation Params
     aug: AugmentConfig = field(default_factory=AugmentConfig)
-    aug_level: str = "split"  # ['low', 'high', 'split']
+    aug_level: str = "high"  # ['low', 'high']
 
     # Optimization Params
     lr: float = 5e-5

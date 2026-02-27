@@ -115,12 +115,20 @@ def main(
     results_df = pd.DataFrame(results_list)
     results_df = pd.merge(results_df, labels, on="source_tif", how="left")
 
-    print("Results", model_path.parent.parent.name)
-    print("==========================")
-    print("F1 w/sure")
-    print(f1_score(results_df.y_true, results_df.y_pred, average="macro"))
-    print("F1 unsure")
-    print(f1_score(results_df.y_true_unsure, results_df.y_pred_unsure))
+    if len(results_df.y_true.unique()) > 1:
+        print("Results", model_path.parent.parent.name)
+        print("==========================")
+
+        print("F1 w/sure")
+        no_unsure = results_df[results_df.y_true >= 0]
+        print(f1_score(no_unsure.y_true, no_unsure.y_pred, average="macro"))
+
+        print("F1 w/sure & pred sure")
+        no_unsure2 = results_df[(results_df.y_true >= 0) & (results_df.y_pred_unsure == 0)]
+        print(f1_score(no_unsure2.y_true, no_unsure2.y_pred, average="macro"))
+
+        print("F1 unsure")
+        print(f1_score(results_df.y_true_unsure, results_df.y_pred_unsure))
 
     if save_path.exists():
         os.remove(save_path)

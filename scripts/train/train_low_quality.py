@@ -3,11 +3,14 @@ import os
 import time
 import traceback
 from pathlib import Path
+from typing import Any
 
+import torch
 from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
 from omegaconf import DictConfig, OmegaConf
+from omegaconf.base import ContainerMetadata
 from rich import get_console
 from rich.table import Column, Table
 
@@ -17,6 +20,8 @@ from estuary.low_quality.module import LowQualityModule
 from estuary.util.my_logging import setup_logger
 
 logger = logging.getLogger(__name__)
+
+torch.serialization.add_safe_globals([DictConfig, ContainerMetadata, Any, QualityConfig])
 
 
 def main() -> None:
@@ -63,6 +68,7 @@ def main() -> None:
         model = LowQualityModule.load_from_checkpoint(
             checkpoint_path=checkpoint,
             strict=False,
+            weights_only=False,
             **cli_conf,  # type: ignore
         )
         conf = model.conf
@@ -126,7 +132,7 @@ def main() -> None:
     trainer.fit(model=model, datamodule=datamodule)
 
     # Test!
-    results = trainer.test(model=model, datamodule=datamodule, ckpt_path="best", verbose=False)[0]
+    results = trainer.test(model=model, datamodule=datamodule, verbose=False)[0]
     columns = [
         Column("Metric", justify="center", style="cyan", width=20),
         Column("Value", justify="center", style="magenta", width=9),

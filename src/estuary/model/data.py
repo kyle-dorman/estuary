@@ -10,7 +10,6 @@ import rasterio
 import torch
 from kornia.constants import Resample
 from lightning.pytorch import LightningDataModule
-from pyproj import Transformer
 from sklearn.model_selection import StratifiedGroupKFold
 from torch.utils.data import DataLoader, Dataset
 
@@ -20,6 +19,7 @@ from estuary.model.config import (
 from estuary.util.bands import Bands
 from estuary.util.data import cpu_count, load_normalization, parse_dt_from_pth
 from estuary.util.transforms import (
+    PadSmall,
     PowerTransformTorch,
     ScaleNormalization,
     basic_train_augs,
@@ -169,20 +169,12 @@ def calc_class_weights(conf: EstuaryConfig) -> tuple[float, ...]:
     return tuple(weights.tolist())
 
 
-def load_tif(pth: Path, config: EstuaryConfig) -> tuple[np.ndarray, tuple[float, float]]:
+def load_tif(pth: Path, config: EstuaryConfig) -> np.ndarray:
     """Read SR GeoTIFF, return array, centroid (lat, lon).
 
     The returned array shape is (C,H,W) for subsequent torch transforms.
     """
     with rasterio.open(pth) as src:
-        bounds = src.bounds
-        crs = src.crs
-        transformer = Transformer.from_crs(crs, 4326, always_xy=True)
-        # centroid in lon/lat then lat/lon ordering
-        centroid_x = (bounds.left + bounds.right) / 2
-        centroid_y = (bounds.top + bounds.bottom) / 2
-        lon, lat = transformer.transform(centroid_x, centroid_y)
-
         data = src.read(out_dtype=np.float32)
         nodata = src.read_masks(1) == 0
 
@@ -198,7 +190,7 @@ def load_tif(pth: Path, config: EstuaryConfig) -> tuple[np.ndarray, tuple[float,
             else:
                 img = np.array([data[b] for b in bands])
 
-        return img, (lon, lat)
+        return img
 
 
 # -------------------------------------------------
@@ -239,6 +231,7 @@ class EstuaryDataset(Dataset):
         else:
             self.scale_aug = ScaleNormalization(self.norm_stats.max_pixel_value)
 
+        self.pad_aug = PadSmall((self.conf.img_size, self.conf.img_size))
         self.scale_resize = K.AugmentationSequential(
             self.resize_aug, self.scale_aug, data_keys=None
         )
@@ -253,6 +246,7 @@ class EstuaryDataset(Dataset):
 
         self.transforms = K.AugmentationSequential(
             K.Resize(size=(conf.img_size, conf.img_size)),
+            K.CenterCrop(size=(conf.img_size, conf.img_size)),
             K.Normalize(mean=self.norm_stats.mean.tolist(), std=self.norm_stats.std.tolist()),
             data_keys=None,
         )
@@ -274,9 +268,11 @@ class EstuaryDataset(Dataset):
         if not tif_path.exists():
             raise FileNotFoundError(tif_path)
 
-        data, _ = load_tif(tif_path, self.conf)
-        pixels = torch.from_numpy(data.astype(np.float32))
+        data = load_tif(tif_path, self.conf)
+        pixels = torch.from_numpy(data.astype(np.float32)).unsqueeze(0)
 
+        # Pad and resize cant be in the same AugmentationSequential :(
+        pixels = self.pad_aug(pixels)
         pixels = self.scale_resize({"image": pixels})["image"]
         if self.train:
             if self.conf.aug_level == "high":
@@ -284,10 +280,7 @@ class EstuaryDataset(Dataset):
             elif self.conf.aug_level == "low":
                 pixels = self._unsure_transforms({"image": pixels})["image"]
             else:
-                if row["source"] == "low_quality":
-                    pixels = self._unsure_transforms({"image": pixels})["image"]
-                else:
-                    pixels = self._confident_tranfroms({"image": pixels})["image"]
+                raise RuntimeError(f"Unexpected aug_level {self.conf.aug_level}")
 
         pixels = self.transforms({"image": pixels})["image"]
 

@@ -198,9 +198,9 @@ def main(
                 project_id = existing_projects[region]
             else:
                 if is_skysat:
-                    name = "SS"
+                    name = "SS" if title is None else title
                 else:
-                    name = "Dove All"
+                    name = "Dove" if title is None else title
                 project_title = f"{name} - {region}"
                 project = client.projects.create(
                     title=project_title, label_config=build_label_config()
@@ -248,8 +248,10 @@ def main(
 
             if tif_path.name.endswith("pansharpened_clip.tif"):
                 jpeg_name = tif_path.stem.replace("_pansharpened_clip", "") + ".jpg"
+                asset_id = tif_path.name.split("_pansharpened_")[0]
             else:
                 jpeg_name = tif_path.stem.replace("_SR_clip", "") + ".jpg"
+                asset_id = tif_path.stem.split("_3B_")[0]
 
             jpeg_path = images_dir / jpeg_name
             tif_to_jpeg(tif_path, jpeg_path)
@@ -259,16 +261,45 @@ def main(
 
             task = {
                 "image": image_to_datauri(jpeg_path),
-                "region": row["region"],
+                "region": int(row["region"]),
+                "acquired": row["acquired"].isoformat() if pd.notna(row["acquired"]) else None,
+                "year": row["acquired"].year,
+                "month": row["acquired"].month,
+                "day": row["acquired"].day,
                 "date": row["acquired"].strftime("%Y-%m-%d"),
+                "asset_id": asset_id,
                 "meta": {
                     "region": region,
+                    "year": row["acquired"].year,
+                    "month": row["acquired"].month,
+                    "day": row["acquired"].day,
+                    "date": row["acquired"].strftime("%Y-%m-%d"),
+                    "acquired": row["acquired"].isoformat() if pd.notna(row["acquired"]) else None,
+                    "asset_id": asset_id,
                     "source_tif": str(tif_path),
                     "source_jpeg": str(jpeg_path),
                 },
             }
 
-            client.tasks.create(data=task, project=project_id)
+            ls_task = client.tasks.create(data=task, project=project_id)
+
+            if "label" in row:
+                label = row["label"]
+
+                ann = {
+                    "value": {"choices": [label]},
+                    "from_name": "label",
+                    "to_name": "image",
+                    "type": "choices",
+                }
+
+                client.annotations.create(
+                    task=ls_task.id,
+                    project=project_id,
+                    result=[ann],
+                    id=int(ls_task.id),  # type: ignore
+                )
+
             tasks.append(task)
             created_tasks_count += 1
 

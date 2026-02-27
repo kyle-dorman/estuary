@@ -18,6 +18,62 @@ from estuary.util.bands import Bands
 from estuary.util.config import AugmentConfig
 
 
+class PadSmall(K.GeometricAugmentationBase2D):
+    r"""Pad so the shortest side is at least size."""
+
+    def __init__(
+        self,
+        size: tuple[int, int],
+        pad_mode: str = "constant",
+        pad_value: float = 0,
+        keepdim: bool = False,
+    ) -> None:
+        super().__init__(p=1.0, same_on_batch=True, p_batch=1.0, keepdim=keepdim)
+        self.flags = {"size": size, "pad_mode": pad_mode, "pad_value": pad_value}
+
+    # TODO: It is incorrect to return identity
+    # TODO: Having a resampled version with ``warp_affine``
+    def compute_transformation(
+        self, image: Tensor, params: dict[str, Tensor], flags: dict[str, Any]
+    ) -> Tensor:
+        return self.identity_matrix(image)
+
+    def apply_transform(
+        self,
+        input: Tensor,
+        params: dict[str, Tensor],
+        flags: dict[str, Any],
+        transform: Tensor | None = None,
+    ) -> Tensor:
+        _, _, height, width = input.shape
+        height_pad: int = max(0, flags["size"][0] - height)
+        width_pad: int = max(0, flags["size"][1] - width)
+
+        height_pad_left = height_pad // 2
+        height_pad_right = height_pad - height_pad_left
+
+        width_pad_left = width_pad // 2
+        width_pad_right = width_pad - width_pad_left
+
+        return torch.nn.functional.pad(
+            input,
+            [height_pad_left, height_pad_right, width_pad_left, width_pad_right],
+            mode=flags["pad_mode"],
+            value=flags["pad_value"],
+        )
+
+    def inverse_transform(
+        self,
+        input: Tensor,
+        flags: dict[str, Any],
+        transform: Tensor | None = None,
+        size: tuple[int, int] | None = None,
+    ) -> Tensor:
+        if size is None:
+            raise RuntimeError("`size` has to be a tuple. Got None.")
+        return input[..., : size[0], : size[1]]
+
+
 class PowerTransformTorch(IntensityAugmentationBase2D):
     def __init__(self, lambdas: list[float], max_val: int):
         super().__init__(p=1)
@@ -215,14 +271,7 @@ def contrast_stretch_torch(
 
 
 class RandomPlasmaFog(IntensityAugmentationBase2D):
-    r"""Add gaussian noise to a batch of multi-dimensional images.
-
-    This is based on the original paper: TorMentor: Deterministic dynamic-path, data augmentations
-    with fractals.
-    See: :cite:`tormentor` for more details.
-
-    .. note::
-        This function internally uses :func:`kornia.contrib.diamond_square`.
+    r"""Add white fog like noise.
 
     Args:
         roughness: value to scale during the recursion in the generation of the fractal map.
@@ -615,35 +664,43 @@ class MisalignedImage(IntensityAugmentationBase2D):
 
 
 def basic_train_augs(conf: AugmentConfig, bands: Bands) -> list[K.AugmentationBase2D]:
+    noise_augs = [
+        K.RandomGaussianNoise(
+            mean=0.0,
+            std=conf.gauss_std,
+            p=1.0,
+        ),
+        K.RandomErasing(p=1.0, scale=conf.erasing_scale),
+    ]
+    if bands.num_channels == 3:
+        noise_augs.extend(
+            [
+                RandomPlasmaFog(
+                    p=1.0,
+                    fog_intensity=conf.fog_intensity,
+                    roughness=conf.fog_roughness,
+                ),
+                K.RandomPlasmaShadow(
+                    p=1.0,
+                    shade_intensity=conf.shade_intensity,
+                    shade_quantity=conf.shade_quantity,
+                ),
+                K.RandomSaltAndPepperNoise(
+                    amount=tuple(conf.salt_pepper_amount),  # type: ignore
+                    p=1.0,
+                ),
+                K.RandomRain(
+                    p=1.0,
+                    number_of_drops=conf.rain_number_of_drops,
+                    drop_height=conf.rain_drop_height,
+                    drop_width=conf.rain_drop_width,
+                ),
+            ]
+        )
     noise_aug = K.AugmentationSequential(
         K.RandomBrightness(p=0.0),  # Identity,
         K.AugmentationSequential(
-            K.RandomSaltAndPepperNoise(
-                amount=tuple(conf.salt_pepper_amount),  # type: ignore
-                p=1.0,
-            ),
-            K.RandomGaussianNoise(
-                mean=0.0,
-                std=conf.gauss_std,
-                p=1.0,
-            ),
-            K.RandomRain(
-                p=1.0,
-                number_of_drops=conf.rain_number_of_drops,
-                drop_height=conf.rain_drop_height,
-                drop_width=conf.rain_drop_width,
-            ),
-            K.RandomErasing(p=1.0, scale=conf.erasing_scale),
-            RandomPlasmaFog(
-                p=1.0,
-                fog_intensity=conf.fog_intensity,
-                roughness=conf.fog_roughness,
-            ),
-            K.RandomPlasmaShadow(
-                p=1.0,
-                shade_intensity=conf.shade_intensity,
-                shade_quantity=conf.shade_quantity,
-            ),
+            *noise_augs,
             random_apply=1,
         ),
         random_apply=1,
@@ -667,42 +724,39 @@ def basic_train_augs(conf: AugmentConfig, bands: Bands) -> list[K.AugmentationBa
             K.RandomContrast(contrast=(1 - conf.contrast, 1 + conf.contrast), p=1.0),
         )
 
+    channel_shift = RandomChannelShift(
+        shift_limit=conf.channel_shift_limit,
+        num_channels=bands.num_channels(),
+        p=1.0,
+    )
+
+    color_augs = [
+        jiggle,
+        # K.RandomPlasmaContrast(p=1.0, roughness=(0.1, 0.3)),
+        K.RandomPlasmaBrightness(p=1.0, intensity=conf.plasma_brightness),
+        K.RandomSharpness(sharpness=conf.sharpness, p=1.0),
+        channel_shift,
+        illumination,
+        K.RandomPosterize(p=1.0, bits=(conf.posterize_bits, 7)),
+    ]
+
     if bands.num_channels == 3:
-        channel_shift = RandomChannelShift(
-            shift_limit=conf.channel_shift_limit,
-            num_channels=bands.num_channels(),
-            p=1.0,
-        )
-    else:
-        channel_shift = K.RandomRGBShift(
-            r_shift_limit=conf.channel_shift_limit,
-            g_shift_limit=conf.channel_shift_limit,
-            b_shift_limit=conf.channel_shift_limit,
-            p=1.0,
+        color_augs.extend(
+            [
+                K.RandomPlanckianJitter(p=1.0),
+            ]
         )
 
-    color_augs = K.AugmentationSequential(
+    color_aug = K.AugmentationSequential(
         K.RandomBrightness(p=0.0),  # Identity,
         K.AugmentationSequential(
-            jiggle,
-            K.RandomPlasmaContrast(p=1.0),
-            K.RandomPlasmaBrightness(p=1.0, intensity=conf.plasma_brightness),
-            K.RandomSharpness(sharpness=conf.sharpness, p=1.0),
-            channel_shift,
-            K.RandomPlanckianJitter(
-                p=1.0,
-            ),
-            illumination,
-            K.RandomPosterize(
-                p=1.0,
-                bits=(conf.posterize_bits, 7),
-            ),
+            *color_augs,
             random_apply=(1, 2),
         ),
         random_apply=1,
     )
 
-    blur_augs = K.AugmentationSequential(
+    blur_aug = K.AugmentationSequential(
         K.RandomBrightness(p=0.0),  # Identity,
         K.AugmentationSequential(
             K.RandomGaussianBlur(
@@ -740,9 +794,12 @@ def basic_train_augs(conf: AugmentConfig, bands: Bands) -> list[K.AugmentationBa
         K.RandomVerticalFlip(p=conf.vertical_flip_p),
         K.RandomHorizontalFlip(p=conf.horizontal_flip_p),
         K.RandomRotation90((0, 3), p=conf.rotation_p),
-        color_augs,
-        blur_augs,
-        noise_aug,
+        K.AugmentationSequential(
+            color_aug,
+            blur_aug,
+            noise_aug,
+            random_apply=(1, 3),
+        ),  # type: ignore
     ]  # type: ignore
 
 
@@ -759,7 +816,7 @@ def unsure_train_augs(conf: AugmentConfig, bands: Bands) -> list[K.AugmentationB
             K.RandomContrast(contrast=(1 - conf.contrast, 1 + conf.contrast), p=1.0),
         )
 
-    if bands.num_channels == 3:
+    if bands.num_channels != 3:
         channel_shift = RandomChannelShift(
             shift_limit=conf.channel_shift_limit,
             num_channels=bands.num_channels(),
@@ -779,9 +836,7 @@ def unsure_train_augs(conf: AugmentConfig, bands: Bands) -> list[K.AugmentationB
             jiggle,
             K.RandomSharpness(sharpness=conf.sharpness, p=1.0),
             channel_shift,
-            K.RandomPlanckianJitter(
-                p=1.0,
-            ),
+            K.RandomPlanckianJitter(p=1.0),
             random_apply=1,
         ),
         random_apply=1,

@@ -327,10 +327,32 @@ class EstuaryModule(LightningModule):
         )
 
         # Helper: is this a normalization/bias param?
-        def is_norm_or_bias(module, name):
-            return name.endswith("bias") or isinstance(module, norm_modules)
+        def is_norm_or_bias(module, param_full_name: str):
+            # Common ViT params that should NOT be weight-decayed
+            vit_no_decay = (
+                "pos_embed",
+                "cls_token",
+                "dist_token",
+                "relative_position_bias",  # generic
+                "relative_position_bias_table",  # timm
+                "rel_pos",  # some backbones
+                "reg_token",
+                "mask_token",
+            )
+            leaf = param_full_name.split(".")[-1]
+            return (
+                leaf.endswith("bias")
+                or isinstance(module, norm_modules)
+                or any(vn in param_full_name for vn in vit_no_decay)
+            )
 
         backbone_decay, backbone_no_decay, head_decay, head_no_decay = [], [], [], []
+        backbone_decay_names, backbone_no_decay_names, head_decay_names, head_no_decay_names = (
+            [],
+            [],
+            [],
+            [],
+        )
         # Traverse all named parameters with their modules
         for module_name, module in self.model.named_modules():
             for name, param in module.named_parameters(recurse=False):
@@ -338,16 +360,20 @@ class EstuaryModule(LightningModule):
                     continue
                 param_full_name = f"{module_name}.{name}" if module_name else name
                 is_head = ("head" in param_full_name) or ("classifier" in param_full_name)
-                if is_norm_or_bias(module, name):
+                if is_norm_or_bias(module, param_full_name):
                     if is_head:
                         head_no_decay.append(param)
+                        head_no_decay_names.append(param_full_name)
                     else:
                         backbone_no_decay.append(param)
+                        backbone_no_decay_names.append(param_full_name)
                 else:
                     if is_head:
                         head_decay.append(param)
+                        head_decay_names.append(param_full_name)
                     else:
                         backbone_decay.append(param)
+                        backbone_decay_names.append(param_full_name)
 
         # Build param groups: backbone and head, each with decay/no_decay, each with their own LR
         param_groups = []

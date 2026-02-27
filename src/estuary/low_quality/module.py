@@ -61,7 +61,7 @@ def load_encorder_from_path(conf: QualityConfig, num_classes: int) -> nn.Module:
     )
     model: TimmModel = module.model  # type: ignore
 
-    model.model.reset_classifier(num_classes, conf.global_pool)  # type: ignore
+    model.model.reset_classifier(num_classes, "avg")  # type: ignore
     for child_name, child_module in model.model.head.named_children():  # type: ignore
         logger.info(f"Setting weights for {child_name}")
         _init_weights(child_module)

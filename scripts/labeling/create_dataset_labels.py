@@ -21,11 +21,13 @@ def out_tif_path(row) -> Path:
 def process_df(df: pd.DataFrame, out_name: str) -> pd.DataFrame:
     print(out_name)
 
-    keep = df.source_tif.apply(lambda a: Path(a).exists())
-    print("Removed missing files")
-    print(df[~keep][["region", "year", "month", "instrument"]])
-
     df["new_source_tif"] = df.apply(out_tif_path, axis=1)  # type: ignore
+
+    keep = df.new_source_tif.apply(lambda a: Path(a).exists())
+    if not keep.all():
+        print("Removed missing files")
+        print(df[~keep][["region", "year", "month", "instrument"]])
+
     df = df[keep].copy().reset_index(drop=True)
 
     for _, row in df.iterrows():
@@ -94,7 +96,7 @@ def dedupe_within_days(
 def run():
     LOW_QUALITY_LABELS = Path("/Volumes/x10pro/estuary/labeling/low_quality/unsure_only.csv")
     TIME_SERIES_LABELS = Path("/Volumes/x10pro/estuary/labeling/dove_timeseries/labels.csv")
-    TRAIN_LABELS = Path("/Volumes/x10pro/estuary/labeling/dove/labels.csv")
+    TRAIN_LABELS = Path("/Volumes/x10pro/estuary/labeling/dove_split_by_region/labels.csv")
     CLUSTER_LABELS = Path("/Volumes/x10pro/estuary/labeling/low_quality/cluster_labels.csv")
     gdf = gpd.read_file("/Volumes/x10pro/estuary/geos/ca_data_w_empa_pmep_usgs.geojson")
     VALID_REGIONS = gdf[~gdf.skipped]["Site code"].to_list()
@@ -128,7 +130,7 @@ def run():
 
     lq_df["dup_order"] = 0
     lq_df["source"] = "low_quality"
-    # clustered_df["source"] = "clustered"
+    clustered_df["source"] = "clustered"
     train_df["source"] = "train"
     train_df["dup_order"] = 1
 
@@ -171,7 +173,7 @@ def run():
     after = len(base_model_dataset)
     print(f"Deduped base_model_dataset within 3 days by region+label: {before} -> {after}")
 
-    process_df(ts_df, "time_series")
+    process_df(ts_df, "low_quality_time_series")
     process_df(base_model_dataset, "train")
     process_df(clustered_df, "cluster_labels")
 
