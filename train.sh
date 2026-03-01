@@ -4,10 +4,10 @@ set -Eeuo pipefail
 
 # ---------------- USER CONFIG ----------------
 DEBUG=false
-BATCH_SIZE=64
+BATCH_SIZE=16
 WORKERS=4
 PREFETCH=2
-EPOCHS=25
+EPOCHS=50
 
 # Eight band
 #     bands="EIGHT" \
@@ -28,6 +28,7 @@ EPOCHS=25
 #     epochs=100 \
 #     warmup_epochs=5 \
 #     lr=3e-4 \
+# vit_small_patch16_dinov3.lvd1689m
 
 uv run --env-file .env scripts/train/train.py \
     data="/Users/kyledorman/data/estuary/dataset/train.csv" \
@@ -41,14 +42,15 @@ uv run --env-file .env scripts/train/train.py \
     val_year=2021 \
     test_year=2025 \
     use_class_weights=true \
-    backbone_lr_scale=0.01 \
+    backbone_lr_scale=0.05 \
     lr=1e-4 \
-	warmup_epochs=5 \
+	warmup_epochs=10 \
     aug_level="low" \
     weight_decay=0.05 \
     dropout=0.0 \
-	drop_path=0.0 \
+	drop_path=0.05 \
     precision="32-true" \
-    accelerator="cpu" \
-    model_name="vit_small_patch16_dinov3.lvd1689m" \
+    smooth_factor=0.05 \
+    img_size=224 \
+    model_name="vit_small_patch8_224.dino" \
     ;

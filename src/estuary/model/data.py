@@ -19,7 +19,6 @@ from estuary.model.config import (
 from estuary.util.bands import Bands
 from estuary.util.data import cpu_count, load_normalization, parse_dt_from_pth
 from estuary.util.transforms import (
-    PadSmall,
     PowerTransformTorch,
     ScaleNormalization,
     basic_train_augs,
@@ -231,7 +230,7 @@ class EstuaryDataset(Dataset):
         else:
             self.scale_aug = ScaleNormalization(self.norm_stats.max_pixel_value)
 
-        self.pad_aug = PadSmall((self.conf.img_size, self.conf.img_size))
+        # self.pad_aug = PadSmall((self.conf.img_size, self.conf.img_size))
         self.scale_resize = K.AugmentationSequential(
             self.resize_aug, self.scale_aug, data_keys=None
         )
@@ -272,7 +271,7 @@ class EstuaryDataset(Dataset):
         pixels = torch.from_numpy(data.astype(np.float32)).unsqueeze(0)
 
         # Pad and resize cant be in the same AugmentationSequential :(
-        pixels = self.pad_aug(pixels)
+        # pixels = self.pad_aug(pixels)
         pixels = self.scale_resize({"image": pixels})["image"]
         if self.train:
             if self.conf.aug_level == "high":
