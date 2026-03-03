@@ -196,7 +196,8 @@ class EstuaryModule(LightningModule):
             target_f = target.float()
             target_f = target_f * (1 - self.conf.smooth_factor) + 0.5 * self.conf.smooth_factor
 
-            loss = self.loss_fn(logits, target_f)
+            ce_loss = loss = self.loss_fn(logits, target_f)
+            entropy = 0.0
             probs_pos = torch.sigmoid(logits)
 
             # Metrics expect probabilities for binary tasks
@@ -209,13 +210,23 @@ class EstuaryModule(LightningModule):
             ece.update(probs_pos, target)
         else:
             # Multiclass: logits [B, C]
-            loss = self.loss_fn(logits, target)
+            ce_loss = self.loss_fn(logits, target)
+
+            log_probs = logits.log_softmax(dim=1)
+            probs = log_probs.exp()
+            entropy = -(probs * log_probs).sum(dim=1).mean()
+            loss = ce_loss - 0.01 * entropy
+
             metrics.update(logits, target)  # torchmetrics multiclass can accept logits
             cm.update(logits.argmax(dim=1), target)
             ece.update(logits, target)
 
         self.log_dict(
-            {f"{train_test_val}/loss": loss},
+            {
+                f"{train_test_val}/loss": loss,
+                f"{train_test_val}/ce_loss": ce_loss,
+                f"{train_test_val}/entropy": entropy,
+            },
             prog_bar=True,
             sync_dist=True,
             batch_size=len(batch["image"]),
