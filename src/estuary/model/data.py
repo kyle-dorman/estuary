@@ -230,7 +230,6 @@ class EstuaryDataset(Dataset):
         else:
             self.scale_aug = ScaleNormalization(self.norm_stats.max_pixel_value)
 
-        # self.pad_aug = PadSmall((self.conf.img_size, self.conf.img_size))
         self.scale_resize = K.AugmentationSequential(
             self.resize_aug, self.scale_aug, data_keys=None
         )
@@ -270,8 +269,6 @@ class EstuaryDataset(Dataset):
         data = load_tif(tif_path, self.conf)
         pixels = torch.from_numpy(data.astype(np.float32)).unsqueeze(0)
 
-        # Pad and resize cant be in the same AugmentationSequential :(
-        # pixels = self.pad_aug(pixels)
         pixels = self.scale_resize({"image": pixels})["image"]
         if self.train:
             if self.conf.aug_level == "high":

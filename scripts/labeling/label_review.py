@@ -54,6 +54,23 @@ def _find_prob_cols(df: pd.DataFrame) -> list[str]:
     return [c for c in df.columns if c.startswith("p_")]
 
 
+def add_entropy_column(df: pd.DataFrame, *, eps: float = 1e-12) -> pd.DataFrame:
+    """
+    Add a numeric `_entropy` column computed from p_* columns:
+      H = -sum_i p_i log(p_i)
+    Mutates df and returns it for convenience.
+    """
+    prob_cols = _find_prob_cols(df)
+    if not prob_cols:
+        df["_entropy"] = np.nan
+        return df
+
+    p = df[prob_cols].astype(float).to_numpy(copy=True)
+    p = np.clip(p, eps, 1.0)  # avoid log(0) / malformed probs
+    df["_entropy"] = -(p * np.log(p)).sum(axis=1)
+    return df
+
+
 def tif_to_rgb(
     pth: Path,
     p_low: tuple[int, ...],
@@ -148,6 +165,9 @@ def load_predictions(csv_path: str) -> pd.DataFrame:
     if "source_tif" not in df.columns:
         raise ValueError("CSV must contain a 'source_tif' column (path to tif).")
 
+    # Add entropy column for sorting (requires p_* columns)
+    df = add_entropy_column(df)
+
     return df
 
 
@@ -203,6 +223,12 @@ def build_sequence(
             if "acquired" in df.columns:
                 return df.sort_values(["region", "acquired"], kind="mergesort")
             return df.sort_values("region", kind="mergesort")
+        return df
+
+    # Sort by entropy (high entropy first by default)
+    if mode == "entropy":
+        if "_entropy" in df.columns:
+            return df.sort_values("_entropy", ascending=False, na_position="last", kind="mergesort")
         return df
 
     # Sort by a specific column, descending by default (used for p_* columns)
@@ -282,7 +308,7 @@ def main():
         st.header("Ordering")
         order_mode = st.radio(
             "Order",
-            options=["random", "date", "region", "probability"],
+            options=["random", "date", "region", "probability", "entropy"],
             index=0,
             horizontal=True,
         )
@@ -291,6 +317,7 @@ def main():
         prob_cols_all = _find_prob_cols(df)
         sort_prob_col = None
         sort_prob_desc = True
+        entropy_desc = True
         if order_mode == "probability":
             if prob_cols_all:
                 sort_prob_col = st.selectbox(
@@ -301,6 +328,15 @@ def main():
                 sort_prob_desc = st.checkbox("Descending", value=True)
             else:
                 st.caption("No probability columns found (expected columns starting with 'p_').")
+
+        if order_mode == "entropy":
+            entropy_desc = st.checkbox(
+                "Descending",
+                value=True,
+                help="Sort by _entropy (high-to-low).",
+            )
+            if "_entropy" not in df.columns or df["_entropy"].isna().all():
+                st.caption("Entropy unavailable (requires p_* columns).")
 
         st.divider()
         st.header("Display")
@@ -394,7 +430,7 @@ def main():
     sort_col_str = "" if sort_prob_col is None else sort_prob_col
     seq_key = (
         f"{csv_path}|{order_mode}|{seed}|"
-        f"sortcol={sort_col_str}|desc={int(bool(sort_prob_desc))}|"
+        f"sortcol={sort_col_str}|pdesc={int(bool(sort_prob_desc))}|edesc={int(bool(entropy_desc))}|"
         f"ytrue={','.join(y_true_sel)}|ypred={','.join(y_pred_sel)}|"
         f"region={','.join(region_sel)}|year={','.join(map(str, year_sel))}"
     )
@@ -408,6 +444,8 @@ def main():
         seq_mode = "region"
     elif order_mode == "probability" and sort_prob_col is not None:
         seq_mode = f"col:{sort_prob_col}"
+    elif order_mode == "entropy":
+        seq_mode = "entropy"
     else:
         seq_mode = "random"
 
@@ -415,6 +453,10 @@ def main():
 
     # If sorting by probability and user requested ascending, reverse the sorted order
     if order_mode == "probability" and sort_prob_col is not None and not sort_prob_desc:
+        seq = seq.iloc[::-1]
+
+    # If sorting by entropy and user requested ascending, reverse the sorted order
+    if order_mode == "entropy" and not entropy_desc:
         seq = seq.iloc[::-1]
 
     if seq.empty:
