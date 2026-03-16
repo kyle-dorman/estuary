@@ -20,6 +20,7 @@ class EstuaryConfig:
     cv_index: int = 0
     val_year: int | None = None
     test_year: int | None = None
+    experiment_name: str | None = None
 
     classes: tuple[str, ...] = CLASSES
     bands: Bands = Bands.FALSE_COLOR
@@ -69,6 +70,7 @@ class EstuaryConfig:
     scheduler: str = "cosine"
     gradient_clip_val: float = 1.0
     gradient_clip_algorithm: str | None = "norm"
+    entropy_factor: float = 0.01
 
     # Loss Params
     loss_fn: str = "ce"

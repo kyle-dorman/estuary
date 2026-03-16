@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 
 import click
+import geopandas as gpd
+import numpy as np
 import pandas as pd
 import torch
 import tqdm
@@ -31,13 +33,17 @@ from estuary.util.data import parse_dt_from_pth
     required=True,
 )
 @click.option("--threshold-unsure", type=float, default=0.5)
+@click.option("--threshold", type=float, default=0.5)
 def main(
     labels_path: Path,
     model_path: Path,
     unsure_model_path: Path,
     threshold_unsure: float,
+    threshold: float,
 ):
     save_path = model_path.parent.parent / f"{labels_path.stem}_preds.csv"
+    if save_path.exists():
+        return
 
     module = EstuaryModule.load_from_checkpoint(model_path, batch_size=1, weights_only=False).eval()
     unsure_module = LowQualityModule.load_from_checkpoint(
@@ -53,9 +59,16 @@ def main(
     # build a lookup dict → index
     lookup = {tok: idx for idx, tok in enumerate(module.conf.classes)}
     lookup["unsure"] = -1
+    if "perched open" not in module.conf.classes:
+        labels.loc[labels.label == "perched open", "label"] = "open"
     labels["label_idx"] = labels["label"].map(lookup)
     labels["y_true"] = labels.label_idx
     labels["y_true_unsure"] = labels.label.apply(lambda a: int(a == "unsure"))
+
+    gdf = gpd.read_file(Path("/Volumes/x10pro/estuary/") / "geos/ca_data_w_empa_pmep_usgs.geojson")
+    valid_regions = gdf[~gdf.skipped]["Site code"].tolist()
+
+    labels = labels[labels.region.isin(valid_regions)].copy()
 
     ds = EstuaryDataset(labels, module.conf, train=False)
     dl = DataLoader(
@@ -75,40 +88,43 @@ def main(
 
         logits: torch.Tensor = module(batch)
 
-        probs = torch.softmax(logits, dim=1)
-        probs_np = probs.detach().cpu().numpy()[0]
+        row = {}
 
-        # Predicted class + confidence
-        y_pred = probs.argmax(dim=1).item()
-        y_prob = probs[0, y_pred].item()  # type: ignore
+        if len(module.conf.classes) > 2:
+            probs = torch.softmax(logits, dim=1)
+            probs_np: np.ndarray = probs.detach().cpu().numpy()[0]
 
-        # Openness score in [-1, 1] as the expectation of a per-class openness weight.
-        # IMPORTANT: this must match the *order* of `module.conf.classes`.
-        # Adjust weights if you add/remove/reorder classes.
-        openness_weight_by_class = {
-            "closed": -1.0,
-            "open": 1.0,
-            "perched open": 1.0,
-        }
-        weights = torch.tensor(
-            [openness_weight_by_class[c] for c in module.conf.classes],
-            device=probs.device,
-            dtype=probs.dtype,
+            # Predicted class + confidence
+            y_pred = probs.argmax(dim=1).item()
+            y_prob = probs[0, y_pred].item()  # type: ignore
+
+            for cls, p in zip(module.conf.classes, probs_np, strict=True):
+                row[f"p_{cls.replace(' ', '_')}"] = float(p)
+        else:
+            probs = torch.sigmoid(logits)
+            probs_np = probs.detach().cpu().numpy()[0, 0].item()
+
+            y_pred = int(probs_np > threshold)
+            if y_pred:
+                y_prob = probs_np
+            else:
+                y_prob = 1.0 - probs_np
+
+            for i, cls in enumerate(module.conf.classes):
+                if i == 1:
+                    row[f"p_{cls.replace(' ', '_')}"] = float(probs_np)
+                else:
+                    row[f"p_{cls.replace(' ', '_')}"] = 1.0 - float(probs_np)
+
+        row.update(
+            {
+                "source_tif": batch["source_tif"][0],
+                "y_prob": y_prob,
+                "y_prob_unsure": unsure_probs,
+                "y_pred": y_pred,
+                "y_pred_unsure": unsure_probs > threshold_unsure,
+            }
         )
-        openness = (probs * weights.unsqueeze(0)).sum(dim=1).item()
-
-        row = {
-            "source_tif": batch["source_tif"][0],
-            "y_prob": y_prob,
-            "openness": openness,
-            "y_prob_unsure": unsure_probs,
-            "y_pred": y_pred,
-            "y_pred_unsure": unsure_probs > threshold_unsure,
-        }
-
-        # add one column per class
-        for cls, p in zip(module.conf.classes, probs_np, strict=True):
-            row[f"p_{cls.replace(' ', '_')}"] = float(p)
 
         results_list.append(row)
 

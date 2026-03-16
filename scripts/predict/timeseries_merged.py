@@ -79,7 +79,7 @@ def grouped_prediction(
         return {"y_pred_unsure": 1}
     elif len(clean_df) == 1:
         row = clean_df.iloc[0]
-        out = {"y_pred": row.y_pred, "openness": row.openness, "y_pred_unsure": 0}
+        out = {"y_pred": row.y_pred, "y_pred_unsure": 0}
         for cls in classes:
             cls = cls.replace(" ", "_")
             key = f"p_{cls}"
@@ -103,7 +103,6 @@ def grouped_prediction(
         key = f"p_{cls}"
         out[key] = scores_norm[i]
 
-    out["openness"] = weights_mean(clean_df, "openness", "y_prob_unsure")
     out["y_pred"] = np.argmax(scores)
 
     return out
@@ -150,11 +149,13 @@ def main(
     results["acquired"] = results["source_tif"].apply(lambda p: parse_dt_from_pth(Path(p)))
     results["date"] = results["acquired"].dt.date  # type: ignore
 
+    classes: list[str] = list(CLASSES) if len(results.y_pred.unique()) == 4 else ["closed", "open"]
+
     merged_results = []
     for region, rdf in tqdm.tqdm(results.groupby("region"), total=len(results.region.unique())):
         for date, ddf in rdf.groupby("date"):
             y_true, y_true_unsure = grouped_label(ddf)
-            pred = grouped_prediction(ddf, threshold_unsure, list(CLASSES))
+            pred = grouped_prediction(ddf, threshold_unsure, classes)
 
             out = {
                 "region": region,
@@ -169,84 +170,6 @@ def main(
             merged_results.append(out)
 
     merged_df = pd.DataFrame(merged_results)
-
-    # # Metrics for data quality filter
-    # print("Merged Results")
-
-    # unsure_recall = recall_score(merged_df.y_true_unsure, merged_df.y_pred_unsure)
-    # print("Unsure Recall:", round(unsure_recall, 3))  # type: ignore
-    # unsure_precision = precision_score(merged_df.y_true_unsure, merged_df.y_pred_unsure)
-    # print("Unsure Precision:", round(unsure_precision, 3))  # type: ignore
-
-    # unsure_recall_region = region_balanced_metric(
-    #     merged_df, "y_true_unsure", "y_pred_unsure", recall_score
-    # )
-    # print("Unsure Recall (region-balanced):", round(unsure_recall_region, 3))  # type: ignore
-
-    # unsure_precision_region = region_balanced_metric(
-    #     merged_df, "y_true_unsure", "y_pred_unsure", precision_score
-    # )
-    # print("Unsure Precision (region-balanced):", round(unsure_precision_region, 3))  # type: ignore
-
-    # # Metrics for only known good data
-    # open_df = merged_df[merged_df.y_true_unsure == 0].copy()
-    # open_df["y_true"] = (open_df.y_true == 1).astype(np.int32)
-    # open_df["y_pred"] = (open_df.y_pred == 1).astype(np.int32)
-
-    # open_recall = recall_score(open_df.y_true, open_df.y_pred)
-    # print("Open Recall:", round(open_recall, 3))  # type: ignore
-    # open_precision = precision_score(open_df.y_true, open_df.y_pred)
-    # print("Open Precision:", round(open_precision, 3))  # type: ignore
-
-    # open_recall_region = region_balanced_metric(open_df, "y_true", "y_pred", recall_score)
-    # print("Open Recall (region-balanced):", round(open_recall_region, 3))  # type: ignore
-
-    # open_precision_region = region_balanced_metric(open_df, "y_true", "y_pred", precision_score)
-    # print("Open Precision (region-balanced):", round(open_precision_region, 3))  # type: ignore
-
-    # # Merge predictions (both must be correct)
-    # merged_df["y_true_total"] = ((merged_df.y_true == 1) & (merged_df.y_true_unsure == 0)).astype(
-    #     np.int32
-    # )
-    # merged_df["y_pred_total"] = ((merged_df.y_pred == 1) & (merged_df.y_pred_unsure == 0)).astype(
-    #     np.int32
-    # )
-    # total_recall = recall_score(merged_df.y_true_total, merged_df.y_pred_total)
-    # print("Total Recall:", round(total_recall, 3))  # type: ignore
-    # total_precision = precision_score(merged_df.y_true_total, merged_df.y_pred_total)
-    # print("Total Precision:", round(total_precision, 3))  # type: ignore
-
-    # total_recall_region = region_balanced_metric(
-    #     merged_df, "y_true_total", "y_pred_total", recall_score
-    # )
-    # print("Total Recall (region-balanced):", round(total_recall_region, 3))  # type: ignore
-
-    # total_precision_region = region_balanced_metric(
-    #     merged_df, "y_true_total", "y_pred_total", precision_score
-    # )
-    # print("Total Precision (region-balanced):", round(total_precision_region, 3))  # type: ignore
-
-    # # Merge predictions (both must be correct)
-    # results["y_true_total"] = ((results.y_true == 1) & (results.y_true_unsure == 0)).astype(
-    #     np.int32
-    # )
-    # results["y_pred_total"] = ((results.y_pred == 1) & (results.y_pred_unsure == 0)).astype(
-    #     np.int32
-    # )
-    # total_recall = recall_score(results.y_true_total, results.y_pred_total)
-    # print("Total Recall (no time series):", round(total_recall, 3))  # type: ignore
-    # total_precision = precision_score(results.y_true_total, results.y_pred_total)
-    # print("Total Precision (no time series):", round(total_precision, 3))  # type: ignore
-
-    # total_recall_region = region_balanced_metric(
-    #     results, "y_true_total", "y_pred_total", recall_score
-    # )
-    # print("Total Recall (region-balanced, no time series):", round(total_recall_region, 3))
-
-    # total_precision_region = region_balanced_metric(
-    #     results, "y_true_total", "y_pred_total", precision_score
-    # )
-    # print("Total Precision (region-balanced, no time series):", round(total_precision_region, 3))
 
     if save_path.exists():
         os.remove(save_path)

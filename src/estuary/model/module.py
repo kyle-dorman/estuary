@@ -2,6 +2,7 @@ import logging
 
 import kornia.augmentation as K
 import torch
+import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from lightning.pytorch.loggers import TensorBoardLogger
 from matplotlib import pyplot as plt
@@ -34,6 +35,24 @@ from estuary.util.nn import FocalLoss
 from estuary.util.transforms import contrast_stretch_torch
 
 logger = logging.getLogger(__name__)
+
+
+def bernoulli_entropy_from_logits(logits: torch.Tensor) -> torch.Tensor:
+    """
+    logits: (B,) or (B,1)
+    returns: scalar mean entropy over batch
+    """
+    if logits.ndim == 1:
+        logits = logits.view(-1)
+
+    # log p and log(1-p) stably
+    log_p = F.logsigmoid(logits)  # log(sigmoid(x))
+    log_1mp = F.logsigmoid(-logits)  # log(1 - sigmoid(x))
+
+    p = torch.sigmoid(logits)
+    entropy = -(p * log_p + (1 - p) * log_1mp)  # (B,)
+
+    return entropy.mean()
 
 
 class EstuaryModule(LightningModule):
@@ -196,8 +215,9 @@ class EstuaryModule(LightningModule):
             target_f = target.float()
             target_f = target_f * (1 - self.conf.smooth_factor) + 0.5 * self.conf.smooth_factor
 
-            ce_loss = loss = self.loss_fn(logits, target_f)
-            entropy = 0.0
+            ce_loss = self.loss_fn(logits, target_f)
+            entropy = bernoulli_entropy_from_logits(logits)
+            loss = ce_loss - self.conf.entropy_factor * entropy
             probs_pos = torch.sigmoid(logits)
 
             # Metrics expect probabilities for binary tasks
@@ -215,7 +235,7 @@ class EstuaryModule(LightningModule):
             log_probs = logits.log_softmax(dim=1)
             probs = log_probs.exp()
             entropy = -(probs * log_probs).sum(dim=1).mean()
-            loss = ce_loss - 0.01 * entropy
+            loss = ce_loss - self.conf.entropy_factor * entropy
 
             metrics.update(logits, target)  # torchmetrics multiclass can accept logits
             cm.update(logits.argmax(dim=1), target)

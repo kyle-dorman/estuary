@@ -9,26 +9,6 @@ WORKERS=4
 PREFETCH=2
 EPOCHS=25
 
-# Eight band
-#     bands="EIGHT" \
-#     pretrained=false \
-#     preview_channels=[7,5,3] \
-#     drop_path=0.05 \
-#     dropout=0.1 \
-#     epochs=100 \
-#     warmup_epochs=5 \
-#     lr=3e-4 \
-
-# Four band
-#     bands="FOUR" \
-#     pretrained=false \
-#     preview_channels=[3,2,1] \
-#     drop_path=0.05 \
-#     dropout=0.1 \
-#     epochs=100 \
-#     warmup_epochs=5 \
-#     lr=3e-4 \
-
 uv run --env-file .env scripts/train/train.py \
     data="/Users/kyledorman/data/estuary/dataset/train.csv" \
     normalization_path="/Users/kyledorman/data/estuary/dataset/normalization_no_power/stats.json" \
@@ -43,4 +23,6 @@ uv run --env-file .env scripts/train/train.py \
     use_class_weights=true \
     backbone_lr_scale=0.2 \
     aug_level="high" \
+    classes="['closed','open']" \
+    bands="RGB" \
     ;

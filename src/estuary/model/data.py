@@ -13,9 +13,7 @@ from lightning.pytorch import LightningDataModule
 from sklearn.model_selection import StratifiedGroupKFold
 from torch.utils.data import DataLoader, Dataset
 
-from estuary.model.config import (
-    EstuaryConfig,
-)
+from estuary.model.config import EstuaryConfig
 from estuary.util.bands import Bands
 from estuary.util.data import cpu_count, load_normalization, parse_dt_from_pth
 from estuary.util.transforms import (
@@ -88,8 +86,9 @@ def create_splits(
 
     Supported strategies:
       - "region": Read val/test holdout regions names from EstuaryConfig.region_splits
-      - "crossval": Run a cross validation. Get index from EstuaryConfig.cv_index
-            and num cross validations from EstuaryConfig.cv_folds
+      - "crossval": Hold out one fold of regions for test using EstuaryConfig.cv_index
+            and EstuaryConfig.cv_folds, then use EstuaryConfig.val_year as the
+            validation year within the remaining training regions
       - "yearly": Split by calendar year using EstuaryConfig.val_year and EstuaryConfig.test_year
     """
     df = load_labels(conf)
@@ -98,20 +97,36 @@ def create_splits(
 
     if conf.split_method == "crossval":
         assert conf.cv_index < conf.cv_folds
+        if conf.val_year is None:
+            raise ValueError("crossval split requires conf.val_year")
+
+        df["year"] = df["acquired"].dt.year  # type: ignore
 
         sgkf = StratifiedGroupKFold(n_splits=conf.cv_folds, shuffle=True, random_state=conf.seed)
         found = False
-        for i, (train_idx, val_idx) in enumerate(
-            sgkf.split(df, y=df["label_idx"], groups=df["region"])
-        ):
+        for i, (_, test_idx) in enumerate(sgkf.split(df, y=df["label_idx"], groups=df["region"])):
             if i == conf.cv_index:
                 found = True
-                df_train = df.iloc[train_idx].copy()
-                df_val = df.iloc[val_idx].copy()
-                df_test = df_val.copy()
+                df_test = df.iloc[test_idx].copy()
+
+                test_regions = set(df_test["region"].unique())
+                df_remaining = df[~df["region"].isin(test_regions)].copy()
+
+                df_val = df_remaining[df_remaining["year"] == conf.val_year].copy()
+                df_train = df_remaining[df_remaining["year"] != conf.val_year].copy()
                 break
         if not found:
             raise ValueError(f"cv_index {conf.cv_index} out of range for n_splits={conf.cv_folds}")
+        if df_val.empty:
+            raise ValueError(
+                f"No samples found for val_year={conf.val_year} outside held-out test regions"
+            )
+        if df_train.empty:
+            raise ValueError(
+                "No training samples remain after applying crossval test-region holdout and val_year"
+            )
+        if df_test.empty:
+            raise ValueError("No test samples found for held-out crossval regions")
     elif conf.split_method == "region":
         region_splits = pd.read_csv(conf.region_splits, index_col="region")
 
@@ -268,17 +283,18 @@ class EstuaryDataset(Dataset):
 
         data = load_tif(tif_path, self.conf)
         pixels = torch.from_numpy(data.astype(np.float32)).unsqueeze(0)
+        pixels_dict = {"image": pixels}
 
-        pixels = self.scale_resize({"image": pixels})["image"]
+        pixels_dict = self.scale_resize(pixels_dict)
         if self.train:
             if self.conf.aug_level == "high":
-                pixels = self._confident_tranfroms({"image": pixels})["image"]
+                pixels_dict = self._confident_tranfroms(pixels_dict)
             elif self.conf.aug_level == "low":
-                pixels = self._unsure_transforms({"image": pixels})["image"]
+                pixels_dict = self._unsure_transforms(pixels_dict)
             else:
                 raise RuntimeError(f"Unexpected aug_level {self.conf.aug_level}")
 
-        pixels = self.transforms({"image": pixels})["image"]
+        pixels = self.transforms(pixels_dict)["image"]
 
         # Some Kornia per-sample augs (e.g., RandomResizedCrop) can return (1,C,H,W) for a 3D input.
         # Squeeze a possible leading singleton batch dim so DataLoader collates to (B,C,H,W) and
@@ -286,13 +302,10 @@ class EstuaryDataset(Dataset):
         if pixels.ndim == 4 and pixels.shape[0] == 1:
             pixels = pixels.squeeze(0)
 
-        orig_label_str = row["orig_label"]
-        label = torch.tensor(row["label_idx"], dtype=torch.long)
-
         return {
             "image": pixels,
-            "label": label,
-            "orig_label": orig_label_str,
+            "label": torch.tensor(row["label_idx"], dtype=torch.long),
+            "orig_label": row["orig_label"],
             "source_tif": str(tif_path),
             "region": row["region"],
         }

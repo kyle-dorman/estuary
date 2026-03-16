@@ -205,6 +205,7 @@ class LowQualityModule(LightningModule):
         target_f = target.float()
 
         loss = self.loss_fn(logits, target_f)
+
         probs_pos = torch.sigmoid(logits)
 
         # Metrics expect probabilities for binary tasks

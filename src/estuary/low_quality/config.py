@@ -15,7 +15,7 @@ class QualityConfig:
     val_data: Path | None = None
     test_data: Path = Path("/UPDATEME")
     # How to split train/val/test. One of ["dataset", "yearly"]
-    split_method: str = "yearly"
+    split_method: str = "dataset"
     val_year: int | None = None
     model_training_root: Path = Path("/Users/kyledorman/data/results")
     normalization_path: Path | None = None
