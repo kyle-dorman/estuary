@@ -59,6 +59,7 @@ dependencies = [
     "transformers>=4.55.2",
     "watchdog>=6.0.0",
     "xarray",
+    "zarr>=3.1.6",
 ]
 [dependency-groups]
 dev = [
