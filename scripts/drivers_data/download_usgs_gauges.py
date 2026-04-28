@@ -45,8 +45,8 @@ DV_URL = "https://waterservices.usgs.gov/nwis/dv/"
 REQUEST_TIMEOUT = 60
 MAX_RETRIES = 5
 BACKOFF_SECONDS = 2.0
-DEFAULT_START = "2018-01-01"
-DEFAULT_END = "2024-12-31"
+DEFAULT_START = "2017-01-01"
+DEFAULT_END = "2025-12-31"
 
 
 def _fetch_json(url: str, params: dict[str, Any]) -> dict[str, Any]:

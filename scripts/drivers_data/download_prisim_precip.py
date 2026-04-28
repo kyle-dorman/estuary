@@ -158,7 +158,7 @@ def summarize_one_raster_day(
     "--start", required=True, type=str, help="YYYY-MM-DD", default="2017-01-01", show_default=True
 )
 @click.option(
-    "--end", required=True, type=str, help="YYYY-MM-DD", default="2025-01-01", show_default=True
+    "--end", required=True, type=str, help="YYYY-MM-DD", default="2025-12-31", show_default=True
 )
 @click.option("--resolution", type=click.Choice(["4km", "800m"]), default="4km", show_default=True)
 @click.option(

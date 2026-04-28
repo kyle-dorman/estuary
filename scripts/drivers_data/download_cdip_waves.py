@@ -206,7 +206,7 @@ def _fetch_waves_threaded(
 )
 @click.option(
     "--end",
-    default="2025-01-01",
+    default="2025-12-31",
     show_default=True,
     help="End timestamp for wave extraction.",
 )

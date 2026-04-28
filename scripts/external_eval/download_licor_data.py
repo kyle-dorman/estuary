@@ -168,7 +168,7 @@ def _append_rows(
     "--start",
     type=click.DateTime(),
     required=True,
-    help="Start time (UTC). Example: 2025-01-01T00:00:00Z",
+    help="Start time (UTC). Example: 2017-01-01T00:00:00Z",
 )
 @click.option(
     "--end",
