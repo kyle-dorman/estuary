@@ -37,6 +37,7 @@ class SeasonalDriverConfig:
 
     min_coverage_p_open: float = 0.80
     min_coverage_driver: float = 0.80
+    flicker_window_days: int = 2
 
     predictions_path: str = (
         "/Users/kyledorman/data/results/estuary/train/20260305-095554/"
@@ -141,12 +142,93 @@ def filter_usgs_iv_qc(df: pd.DataFrame) -> pd.DataFrame:
 # =========================
 
 
+def normalize_probability_columns(
+    df: pd.DataFrame,
+    prob_cols: Sequence[str],
+) -> pd.DataFrame:
+    out = df.copy()
+    p = out[list(prob_cols)].to_numpy(dtype=float)
+    row_sum = np.nansum(p, axis=1, keepdims=True)
+    ok = np.isfinite(row_sum[:, 0]) & (row_sum[:, 0] > 0)
+
+    p_norm = p.copy()
+    p_norm[ok] = p[ok] / row_sum[ok]
+    out.loc[:, list(prob_cols)] = p_norm
+    return out
+
+
+def prediction_label(y_pred_open: int) -> str:
+    return "open" if y_pred_open == 1 else "closed"
+
+
+def mark_online_prediction_flickers(
+    df: pd.DataFrame,
+    flicker_window_days: int,
+    state_col: str = "y_pred_open_original",
+) -> pd.DataFrame:
+    out = df.copy()
+    out["is_flicker_removed"] = False
+    out["flicker_pattern"] = pd.NA
+    out["flicker_previous_observation_date"] = pd.NaT
+    out["flicker_next_observation_date"] = pd.NaT
+    out["flicker_days_since_previous_observation"] = np.nan
+    out["flicker_days_until_next_observation"] = np.nan
+
+    for _, region_df in out.sort_values(["region", "date"]).groupby("region", sort=False):
+        kept_indices: list[int] = []
+
+        for idx in region_df.index:
+            state = out.at[idx, state_col]
+            if pd.isna(state):
+                continue
+
+            kept_indices.append(idx)
+
+            while len(kept_indices) >= 3:
+                prev_idx, mid_idx, next_idx = kept_indices[-3:]
+                prev_state = int(out.at[prev_idx, state_col])
+                mid_state = int(out.at[mid_idx, state_col])
+                next_state = int(out.at[next_idx, state_col])
+
+                prev_date = out.at[prev_idx, "date"]
+                mid_date = out.at[mid_idx, "date"]
+                next_date = out.at[next_idx, "date"]
+                prev_gap_days = (mid_date - prev_date).total_seconds() / 86400.0
+                next_gap_days = (next_date - mid_date).total_seconds() / 86400.0
+
+                is_isolated_flip = prev_state == next_state and mid_state != prev_state
+                within_window = (
+                    0 <= prev_gap_days <= flicker_window_days
+                    and 0 <= next_gap_days <= flicker_window_days
+                )
+                if not (is_isolated_flip and within_window):
+                    break
+
+                out.at[mid_idx, "is_flicker_removed"] = True
+                out.at[mid_idx, "flicker_previous_observation_date"] = prev_date
+                out.at[mid_idx, "flicker_next_observation_date"] = next_date
+                out.at[mid_idx, "flicker_days_since_previous_observation"] = prev_gap_days
+                out.at[mid_idx, "flicker_days_until_next_observation"] = next_gap_days
+                out.at[mid_idx, "flicker_pattern"] = "/".join(
+                    [
+                        prediction_label(prev_state),
+                        prediction_label(mid_state),
+                        prediction_label(next_state),
+                    ]
+                )
+
+                kept_indices.pop(-2)
+
+    return out
+
+
 def build_daily_p_open_table(
     preds_all: pd.DataFrame,
     valid_regions: Sequence[int],
     open_threshold: float,
     start_date: str,
     end_date: str | None = None,
+    flicker_window_days: int = 2,
 ) -> pd.DataFrame:
     df = preds_all.copy()
     df = df[df["region"].isin(valid_regions)].copy()
@@ -163,11 +245,31 @@ def build_daily_p_open_table(
         names=["region", "date"],
     )
 
+    prob_cols = ["p_closed", "p_open"]
+    original_prob_cols = ["p_closed_original", "p_open_original"]
+    for col in prob_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df[f"{col}_original"] = df[col]
+
+    df["y_pred_open_original"] = pd.Series(
+        np.where(df["p_open"].notna(), (df["p_open"] > open_threshold).astype(int), pd.NA),
+        index=df.index,
+        dtype="Int64",
+    )
+    df = mark_online_prediction_flickers(
+        df,
+        flicker_window_days=flicker_window_days,
+        state_col="y_pred_open_original",
+    )
+    df.loc[df["is_flicker_removed"], prob_cols] = np.nan
+
     full = df.set_index(["region", "date"]).sort_index().reindex(full_index)
 
-    prob_cols = ["p_closed", "p_open"]
+    full["is_obs_original"] = full[original_prob_cols].notna().any(axis=1)
+    full["is_obs"] = full[prob_cols].notna().any(axis=1)
+    full["is_flicker_removed"] = full["is_flicker_removed"].fillna(False).astype(bool)
 
-    for col in prob_cols:
+    for col in [*prob_cols, *original_prob_cols]:
         full[col] = (
             full[col]
             .groupby(level="region")
@@ -177,13 +279,8 @@ def build_daily_p_open_table(
             .reset_index(level=0, drop=True)
         )
 
-    p = full[prob_cols].to_numpy(dtype=float)
-    row_sum = np.nansum(p, axis=1, keepdims=True)
-    ok = np.isfinite(row_sum[:, 0]) & (row_sum[:, 0] > 0)
-
-    p_norm = p.copy()
-    p_norm[ok] = p[ok] / row_sum[ok]
-    full.loc[:, prob_cols] = p_norm
+    full = normalize_probability_columns(full, prob_cols)
+    full = normalize_probability_columns(full, original_prob_cols)
 
     region_min_date = df.groupby("region")["date"].min().max()
     region_max_date = df.groupby("region")["date"].max().min()
@@ -191,7 +288,49 @@ def build_daily_p_open_table(
     full = full.reset_index()
     full = full[full["date"].between(region_min_date, region_max_date)].copy()
 
+    real_dates = full.loc[full["is_obs"], ["region", "date"]].copy()
+    previous_real = pd.merge_asof(
+        full.sort_values(["date", "region"]),
+        real_dates.rename(columns={"date": "previous_real_observation_date"}).sort_values(
+            ["previous_real_observation_date", "region"]
+        ),
+        left_on="date",
+        right_on="previous_real_observation_date",
+        by="region",
+        direction="backward",
+    )
+    next_real = pd.merge_asof(
+        full.sort_values(["date", "region"]),
+        real_dates.rename(columns={"date": "next_real_observation_date"}).sort_values(
+            ["next_real_observation_date", "region"]
+        ),
+        left_on="date",
+        right_on="next_real_observation_date",
+        by="region",
+        direction="forward",
+    )
+    full = previous_real.merge(
+        next_real[["region", "date", "next_real_observation_date"]],
+        on=["region", "date"],
+        how="left",
+    ).sort_values(["region", "date"])
+
+    full["days_since_previous_real_observation"] = (
+        full["date"] - full["previous_real_observation_date"]
+    ).dt.days
+    full["days_until_next_real_observation"] = (
+        full["next_real_observation_date"] - full["date"]
+    ).dt.days
+    distance_cols = [
+        "days_since_previous_real_observation",
+        "days_until_next_real_observation",
+    ]
+    full["min_days_since_real_observation"] = full[distance_cols].min(axis=1)
+    full["max_days_since_real_observation"] = full[distance_cols].max(axis=1)
+    full["is_interpolated"] = ~full["is_obs"]
+
     full["y_pred_open"] = (full["p_open"] > open_threshold).astype(int)
+    full["y_pred_open_original"] = (full["p_open_original"] > open_threshold).astype(int)
 
     eps = 1e-12
     probs = full[prob_cols].to_numpy(dtype=float)
@@ -306,6 +445,55 @@ def build_daily_wave_table(
     return daily
 
 
+def zero_aware_rank_norm(s):
+    out = pd.Series(np.nan, index=s.index, dtype=float)
+
+    is_zero = s == 0
+    is_pos = s > 0
+
+    out[is_zero] = 0.0
+    out[is_pos] = s[is_pos].rank(pct=True)
+
+    return out
+
+
+def add_per_region_rank_normalization(
+    df: pd.DataFrame,
+    columns: Sequence[str],
+) -> pd.DataFrame:
+    out = df.copy()
+    for col in columns:
+        if col not in out.columns:
+            continue
+        out[f"{col}_rank_norm"] = out.groupby("region")[col].transform(zero_aware_rank_norm)
+    return out
+
+
+DRIVER_RANK_COLUMNS = [
+    "wave_hs_mean",
+    "wave_hs_p90",
+    "wave_hs_max",
+    "wave_tp_mean",
+    "wave_tp_p90",
+    "wave_tp_max",
+    "wave_energy_mean",
+    "wave_energy_p90",
+    "wave_energy_max",
+    "wave_energy_cross_mean",
+    "wave_energy_cross_p90",
+    "wave_energy_cross_max",
+    "wave_energy_along_mean",
+    "wave_energy_along_p90",
+    "wave_energy_along_max",
+    "streamflow_mean",
+    "streamflow_median",
+    "streamflow_p90",
+    "streamflow_max",
+    "tide_range",
+    "tide_range_mean",
+]
+
+
 # =========================
 # Flow prep
 # =========================
@@ -340,6 +528,7 @@ def build_daily_flow_table(
     daily = hourly.groupby(["region", "date"], as_index=False).agg(
         streamflow_mean=("streamflow", "mean"),
         streamflow_median=("streamflow", "median"),
+        streamflow_p90=("streamflow", lambda s: s.quantile(0.9)),
         streamflow_max=("streamflow", "max"),
         flow_n_obs=("streamflow", lambda s: s.notna().sum()),
     )
@@ -398,6 +587,9 @@ def build_daily_driver_table(
                 "p_open",
                 "p_closed",
                 "y_pred_open",
+                "p_open_original",
+                "p_closed_original",
+                "y_pred_open_original",
                 "entropy",
                 "entropy_norm",
                 "year",
@@ -405,6 +597,19 @@ def build_daily_driver_table(
                 "season",
                 "water_year",
                 "wy_season",
+                "is_obs_original",
+                "is_obs",
+                "is_interpolated",
+                "is_flicker_removed",
+                "flicker_pattern",
+                "flicker_previous_observation_date",
+                "flicker_next_observation_date",
+                "flicker_days_since_previous_observation",
+                "flicker_days_until_next_observation",
+                "days_since_previous_real_observation",
+                "days_until_next_real_observation",
+                "min_days_since_real_observation",
+                "max_days_since_real_observation",
             ]
         ]
         .merge(
@@ -440,6 +645,7 @@ def build_daily_driver_table(
                     "date",
                     "streamflow_mean",
                     "streamflow_median",
+                    "streamflow_p90",
                     "streamflow_max",
                     "flow_n_obs",
                 ]
@@ -465,6 +671,7 @@ def build_daily_driver_table(
     )
 
     daily = add_time_fields(daily, date_col="date")
+    daily = add_per_region_rank_normalization(daily, DRIVER_RANK_COLUMNS)
     return daily
 
 
@@ -477,8 +684,13 @@ def aggregate_to_month(
         start_date=("date", "min"),
         end_date=("date", "max"),
         n_days=("date", "size"),
+        original_non_interpolated_days=("is_obs_original", "sum"),
+        non_interpolated_days=("is_obs", "sum"),
+        flicker_removed_observations=("is_flicker_removed", "sum"),
         mean_p_open=("p_open", "mean"),
         mean_p_closed=("p_closed", "mean"),
+        mean_p_open_original=("p_open_original", "mean"),
+        mean_p_closed_original=("p_closed_original", "mean"),
         mean_entropy=("entropy_norm", "mean"),
         wave_hs_mean=("wave_hs_mean", "mean"),
         wave_hs_p90=("wave_hs_p90", "mean"),
@@ -495,6 +707,7 @@ def aggregate_to_month(
         wave_energy_along_max=("wave_energy_along_max", "max"),
         streamflow_mean=("streamflow_mean", "mean"),
         streamflow_median=("streamflow_median", "mean"),
+        streamflow_p90=("streamflow_p90", "mean"),
         streamflow_max=("streamflow_max", "max"),
         tide_mean=("tide_mean", "mean"),
         tide_range_mean=("tide_range", "mean"),
@@ -541,6 +754,8 @@ def aggregate_to_month(
         & (out["tide_cov"] >= min_cov_driver)
     )
 
+    out = add_per_region_rank_normalization(out, DRIVER_RANK_COLUMNS)
+
     return out
 
 
@@ -563,8 +778,13 @@ def aggregate_to_period(
         start_date=("date", "min"),
         end_date=("date", "max"),
         n_days=("date", "size"),
+        original_non_interpolated_days=("is_obs_original", "sum"),
+        non_interpolated_days=("is_obs", "sum"),
+        flicker_removed_observations=("is_flicker_removed", "sum"),
         mean_p_open=("p_open", "mean"),
         mean_p_closed=("p_closed", "mean"),
+        mean_p_open_original=("p_open_original", "mean"),
+        mean_p_closed_original=("p_closed_original", "mean"),
         mean_entropy=("entropy_norm", "mean"),
         wave_hs_mean=("wave_hs_mean", "mean"),
         wave_hs_p90=("wave_hs_p90", "mean"),
@@ -581,6 +801,7 @@ def aggregate_to_period(
         wave_energy_along_max=("wave_energy_along_max", "max"),
         streamflow_mean=("streamflow_mean", "mean"),
         streamflow_median=("streamflow_median", "mean"),
+        streamflow_p90=("streamflow_p90", "mean"),
         streamflow_max=("streamflow_max", "max"),
         tide_mean=("tide_mean", "mean"),
         tide_range_mean=("tide_range", "mean"),
@@ -597,6 +818,8 @@ def aggregate_to_period(
         & (out["flow_cov"] >= min_cov_driver)
         & (out["tide_cov"] >= min_cov_driver)
     )
+
+    out = add_per_region_rank_normalization(out, DRIVER_RANK_COLUMNS)
 
     return out
 
@@ -622,6 +845,7 @@ def main() -> None:
         open_threshold=cfg.open_threshold,
         start_date=cfg.start_date,
         end_date=cfg.end_date,
+        flicker_window_days=cfg.flicker_window_days,
     )
     print(f"daily_p rows: {len(daily_p):,}")
 
