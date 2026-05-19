@@ -16,7 +16,10 @@ EVENT_WINDOWS_TABLE = "transition_event_windows.parquet"
 LABELED_TIMELINE_TABLE = "labeled_timeline.parquet"
 MODEL_TIMELINE_TABLE = "transition_model_timeline.parquet"
 
-DEFAULT_SKIP_REGIONS = (12103,)
+DEFAULT_SKIP_REGIONS = (
+    12103,
+    11,
+)
 DEFAULT_ROLLING_WINDOW_DAYS = (3, 5, 7)
 DEFAULT_ROLLING_FEATURE_DAYS = 7
 DEFAULT_TIMELINE_FEATURE_LAG_DAYS = 1
@@ -24,13 +27,19 @@ DEFAULT_PAIR_FEATURE_LAG_DAYS = 7
 DEFAULT_MIN_OPEN = 0.7
 DEFAULT_MIN_CLOSED = 0.3
 DEFAULT_MAX_UNCERTAIN_BRIDGE_GAP_DAYS = 7
-DEFAULT_MAX_OBS_GAP_DAYS = 14
+DEFAULT_MAX_OBS_GAP_DAYS = 7
 
 REGION_COL = "region"
 DATE_COL = "date"
 STATE_OPEN = "open"
 STATE_CLOSED = "closed"
 STATE_UNCERTAIN = "uncertain"
+PREV_STATE_COL = "prev_state"
+PREV_P_OPEN_COL = "prev_p_open"
+STABLE_TRANSITIONS = (
+    f"{STATE_CLOSED}_to_{STATE_CLOSED}",
+    f"{STATE_OPEN}_to_{STATE_OPEN}",
+)
 
 BASE_FEATURE_COLS = [
     "flow_daily",
@@ -273,11 +282,32 @@ def add_month_features(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def add_previous_state_columns(
+    df: pd.DataFrame,
+    state_prev_lag_days: int,
+    min_open: float,
+    min_closed: float,
+) -> pd.DataFrame:
+    out = df.copy()
+    previous_state_source = out[[REGION_COL, DATE_COL, "p_open"]].copy()
+    previous_state_source[DATE_COL] = previous_state_source[DATE_COL] + pd.Timedelta(
+        days=state_prev_lag_days
+    )  # pyright: ignore[reportOperatorIssue]
+    previous_state_source = previous_state_source.rename(columns={"p_open": PREV_P_OPEN_COL})
+
+    out = out.merge(previous_state_source, on=[REGION_COL, DATE_COL], how="left")
+    out[PREV_STATE_COL] = state_from_probability(out[PREV_P_OPEN_COL], min_open, min_closed)
+    return out
+
+
 def build_transition_model_frame(
     daily: pd.DataFrame,
     rolling_feature_days: int,
     timeline_feature_lag_days: int,
-) -> tuple[pd.DataFrame, list[str], list[str]]:
+    state_prev_lag_days: int,
+    min_open: float,
+    min_closed: float,
+) -> tuple[pd.DataFrame, list[str]]:
     validate_columns(
         daily,
         {
@@ -312,16 +342,15 @@ def build_transition_model_frame(
     )
 
     model_df = add_month_features(model_df)
-
+    model_df = add_previous_state_columns(
+        model_df,
+        state_prev_lag_days=state_prev_lag_days,
+        min_open=min_open,
+        min_closed=min_closed,
+    )
     timeline_feature_cols = lagged_feature_cols + ["month_sin", "month_cos"]
-    timeline_summary_cols = [
-        REGION_COL,
-        DATE_COL,
-        "p_open",
-        *timeline_feature_cols,
-    ]
 
-    return model_df, timeline_feature_cols, timeline_summary_cols
+    return model_df, timeline_feature_cols
 
 
 def resolve_uncertain_bridges(
@@ -345,8 +374,8 @@ def resolve_uncertain_bridges(
             if prev_pos is None or next_pos is None:
                 continue
 
-            gap_before = (pd.Timestamp(dates[pos]) - pd.Timestamp(dates[prev_pos])).days
-            gap_after = (pd.Timestamp(dates[next_pos]) - pd.Timestamp(dates[pos])).days
+            gap_before = (pd.Timestamp(dates[pos]) - pd.Timestamp(dates[prev_pos])).days  # pyright: ignore[reportArgumentType]
+            gap_after = (pd.Timestamp(dates[next_pos]) - pd.Timestamp(dates[pos])).days  # pyright: ignore[reportArgumentType]
             within_bridge_gap = (
                 gap_before <= max_uncertain_bridge_gap_days
                 and gap_after <= max_uncertain_bridge_gap_days
@@ -434,14 +463,73 @@ def build_event_windows(obs_df: pd.DataFrame, max_obs_gap_days: int) -> pd.DataF
         }
     )
 
-    return event_windows[EVENT_WINDOW_COLUMNS].copy()
+    event_windows = event_windows[EVENT_WINDOW_COLUMNS].copy()
+    return merge_adjacent_stable_windows(event_windows)
+
+
+def merge_adjacent_stable_windows(event_windows: pd.DataFrame) -> pd.DataFrame:
+    if event_windows.empty:
+        return event_windows
+
+    merged_rows = []
+    sort_cols = [REGION_COL, "window_start_date", "window_end_date"]
+
+    for _, region_windows in event_windows.sort_values(sort_cols).groupby(REGION_COL, sort=False):
+        current_window: pd.Series | None = None
+
+        for _, next_window in region_windows.iterrows():
+            if can_merge_stable_windows(current_window, next_window):
+                assert current_window is not None
+                current_window["window_end_date"] = next_window["window_end_date"]
+                current_window["window_end_p_open"] = next_window["window_end_p_open"]
+                current_window["obs_gap_days"] = max(
+                    current_window["obs_gap_days"], next_window["obs_gap_days"]
+                )
+                continue
+
+            if current_window is not None:
+                merged_rows.append(current_window)
+            current_window = next_window.copy()
+
+        if current_window is not None:
+            merged_rows.append(current_window)
+
+    return pd.DataFrame(merged_rows, columns=EVENT_WINDOW_COLUMNS).reset_index(drop=True)
+
+
+def can_merge_stable_windows(
+    current_window: pd.Series | None,
+    next_window: pd.Series,
+) -> bool:
+    if current_window is None:
+        return False
+
+    if current_window["transition"] not in STABLE_TRANSITIONS:
+        return False
+
+    if next_window["transition"] != current_window["transition"]:
+        return False
+
+    if current_window["window_start_state"] != current_window["window_end_state"]:
+        return False
+
+    if next_window["window_start_state"] != current_window["window_start_state"]:
+        return False
+
+    if next_window["window_end_state"] != current_window["window_end_state"]:
+        return False
+
+    return pd.Timestamp(current_window["window_end_date"]) == pd.Timestamp(
+        next_window["window_start_date"]
+    )
 
 
 def add_window_type(event_windows: pd.DataFrame, max_obs_gap_days: int) -> pd.DataFrame:
+    stable_transition = event_windows["transition"].isin(STABLE_TRANSITIONS)
     windows = event_windows[
         event_windows["window_start_state"].isin([STATE_OPEN, STATE_CLOSED])
         & event_windows["window_end_state"].isin([STATE_OPEN, STATE_CLOSED])
-        & (event_windows["obs_gap_days"] <= max_obs_gap_days)
+        & (stable_transition | (event_windows["obs_gap_days"] <= max_obs_gap_days))
     ].copy()
 
     windows["window_type"] = np.select(
@@ -574,13 +662,11 @@ def drop_conflicting_pair_states(labeled_timeline: pd.DataFrame) -> pd.DataFrame
 def build_train_eval_pair_dataset(
     labeled_timeline: pd.DataFrame,
     timeline: pd.DataFrame,
-    feature_lag_days: int,
-    feature_cols_base: Sequence[str] = BASE_FEATURE_COLS,
-) -> tuple[pd.DataFrame, list[str]]:
+    state_prev_lag_days: int,
+    feature_cols: Sequence[str] = BASE_FEATURE_COLS,
+) -> pd.DataFrame:
     if labeled_timeline.empty:
-        return empty_train_eval_pair_dataset(feature_cols_base), feature_pair_columns(
-            feature_cols_base
-        )
+        return empty_train_eval_pair_dataset(feature_cols)
 
     label_state = labeled_timeline[LABELED_SOURCE_COLUMNS].copy()
     label_state = label_state.rename(
@@ -593,40 +679,40 @@ def build_train_eval_pair_dataset(
             "source_obs_gap_days": "label_obs_gap_days",
         }
     )
-    label_state["feature_date"] = label_state["label_date"] - pd.Timedelta(days=feature_lag_days)
+    label_state["state_prev_date"] = label_state["label_date"] - pd.Timedelta(
+        days=state_prev_lag_days
+    )
 
     feature_state = labeled_timeline[LABELED_SOURCE_COLUMNS].copy()
     feature_state = feature_state.rename(
         columns={
-            DATE_COL: "feature_date",
+            DATE_COL: "state_prev_date",
             "pair_state": "state_prev",
-            "source_window_type": "feature_window_type",
-            "source_window_start_date": "feature_window_start_date",
-            "source_window_end_date": "feature_window_end_date",
-            "source_obs_gap_days": "feature_obs_gap_days",
+            "source_window_type": "state_prev_window_type",
+            "source_window_start_date": "state_prev_window_start_date",
+            "source_window_end_date": "state_prev_window_end_date",
+            "source_obs_gap_days": "state_prev_obs_gap_days",
         }
     )
 
-    pair_rows = label_state.merge(feature_state, on=[REGION_COL, "feature_date"], how="inner")
-    pair_rows["feature_lag_days"] = feature_lag_days
+    pair_rows = label_state.merge(feature_state, on=[REGION_COL, "state_prev_date"], how="inner")
+    pair_rows["state_prev_lag_days"] = state_prev_lag_days
     pair_rows["is_open"] = (pair_rows["state"] == STATE_OPEN).astype(int)
     pair_rows["transition"] = transition_labels(pair_rows)
 
-    feature_source = timeline[[REGION_COL, DATE_COL, *feature_cols_base]].copy()
+    feature_source = timeline[[REGION_COL, DATE_COL, *feature_cols]].copy()
     feature_source = feature_source.rename(
         columns={
-            DATE_COL: "feature_date",
-            **{col: f"{col}_feature" for col in feature_cols_base},
+            DATE_COL: "label_date",
         }
     )
 
-    train_eval_pairs = pair_rows.merge(feature_source, on=[REGION_COL, "feature_date"], how="inner")
-    feature_cols = feature_pair_columns(feature_cols_base)
+    train_eval_pairs = pair_rows.merge(feature_source, on=[REGION_COL, "label_date"], how="inner")
     train_eval_pairs = train_eval_pairs.dropna(
         subset=[
             REGION_COL,
             "label_date",
-            "feature_date",
+            "state_prev_date",
             "state",
             "state_prev",
             "is_open",
@@ -637,7 +723,7 @@ def build_train_eval_pair_dataset(
         drop=True
     )
 
-    return train_eval_pairs, feature_cols
+    return train_eval_pairs
 
 
 def transition_labels(pair_rows: pd.DataFrame) -> pd.Series:
@@ -651,10 +737,6 @@ def transition_labels(pair_rows: pd.DataFrame) -> pd.Series:
     return labels
 
 
-def feature_pair_columns(feature_cols_base: Sequence[str]) -> list[str]:
-    return [f"{col}_feature" for col in feature_cols_base]
-
-
 def empty_train_eval_pair_dataset(feature_cols_base: Sequence[str]) -> pd.DataFrame:
     return pd.DataFrame(
         columns=[
@@ -665,16 +747,16 @@ def empty_train_eval_pair_dataset(feature_cols_base: Sequence[str]) -> pd.DataFr
             "label_window_start_date",
             "label_window_end_date",
             "label_obs_gap_days",
-            "feature_date",
+            "state_prev_date",
             "state_prev",
-            "feature_window_type",
-            "feature_window_start_date",
-            "feature_window_end_date",
-            "feature_obs_gap_days",
-            "feature_lag_days",
+            "state_prev_window_type",
+            "state_prev_window_start_date",
+            "state_prev_window_end_date",
+            "state_prev_obs_gap_days",
+            "state_prev_lag_days",
             "is_open",
             "transition",
-            *feature_pair_columns(feature_cols_base),
+            *feature_cols_base,
         ]
     )
 
@@ -682,10 +764,13 @@ def empty_train_eval_pair_dataset(feature_cols_base: Sequence[str]) -> pd.DataFr
 def build_train_eval_frames(config: TrainEvalConfig) -> TrainEvalFrames:
     daily = read_daily_driver_table(config.drivers_dir, config.skip_regions)
     daily = add_rolling_driver_features(daily, rolling_window_days(config))
-    model_timeline, _, _ = build_transition_model_frame(
+    model_timeline, timeline_feature_cols = build_transition_model_frame(
         daily,
         rolling_feature_days=config.rolling_feature_days,
         timeline_feature_lag_days=config.timeline_feature_lag_days,
+        state_prev_lag_days=config.pair_feature_lag_days,
+        min_open=config.min_open,
+        min_closed=config.min_closed,
     )
     observed_states = build_observed_state_table(
         model_timeline,
@@ -699,10 +784,11 @@ def build_train_eval_frames(config: TrainEvalConfig) -> TrainEvalFrames:
         event_windows,
         max_obs_gap_days=config.max_obs_gap_days,
     )
-    train_eval_pairs, feature_cols = build_train_eval_pair_dataset(
+    train_eval_pairs = build_train_eval_pair_dataset(
         labeled_timeline,
         model_timeline,
-        feature_lag_days=config.pair_feature_lag_days,
+        state_prev_lag_days=config.pair_feature_lag_days,
+        feature_cols=timeline_feature_cols,
     )
 
     return TrainEvalFrames(
@@ -710,7 +796,7 @@ def build_train_eval_frames(config: TrainEvalConfig) -> TrainEvalFrames:
         event_windows=event_windows,
         labeled_timeline=labeled_timeline,
         train_eval_pairs=train_eval_pairs,
-        feature_cols=feature_cols,
+        feature_cols=timeline_feature_cols,
     )
 
 
@@ -751,7 +837,7 @@ def print_summary(frames: TrainEvalFrames, output_dir: Path, write_intermediates
         )
         click.echo("\nSource window type transitions:")
         click.echo(
-            frames.train_eval_pairs.groupby(["feature_window_type", "label_window_type"])[
+            frames.train_eval_pairs.groupby(["state_prev_window_type", "label_window_type"])[
                 "transition"
             ]
             .value_counts()
@@ -816,7 +902,7 @@ def print_summary(frames: TrainEvalFrames, output_dir: Path, write_intermediates
     type=int,
     default=DEFAULT_PAIR_FEATURE_LAG_DAYS,
     show_default=True,
-    help="Days between the feature date and label date in the train/eval pairs.",
+    help="Days between the previous-state date and label date in the train/eval pairs.",
 )
 @click.option("--min-open", type=float, default=DEFAULT_MIN_OPEN, show_default=True)
 @click.option("--min-closed", type=float, default=DEFAULT_MIN_CLOSED, show_default=True)

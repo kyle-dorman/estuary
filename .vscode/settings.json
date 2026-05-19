@@ -9,15 +9,15 @@
       }
     },
     "python.languageServer": "Pylance",
-    "python.analysis.typeCheckingMode": "basic",
+    // "python.analysis.typeCheckingMode": "basic",
     "python.analysis.diagnosticMode": "workspace",
     "python.analysis.autoImportCompletions": true,
-    "python.analysis.useLibraryCodeForTypes": true,
-    "python.analysis.diagnosticSeverityOverrides": {
-      "reportGeneralTypeIssues": "warning",
-      "reportPrivateImportUsage": "none",
-      "reportUnboundVariable": "warning"
-    },
+    // "python.analysis.useLibraryCodeForTypes": true,
+    // "python.analysis.diagnosticSeverityOverrides": {
+    //   "reportGeneralTypeIssues": "warning",
+    //   "reportPrivateImportUsage": "none",
+    //   "reportUnboundVariable": "warning"
+    // },
     "editor.semanticTokenColorCustomizations": {
       "[One Dark Pro]": { // Apply to this theme only
           "enabled": true,
