@@ -14,12 +14,63 @@ image's parent directory structure (``.../<region>/files/<image>.tif``).
 from pathlib import Path
 
 import click
+import matplotlib as mpl
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.ticker import FixedLocator
 
 from estuary.util.data import parse_dt_from_pth
 
 DEFAULT_WATER_DATA_PATH = Path("/Volumes/x10pro/estuary/water_data/processed")
+WATER_PLOT_FONT_SIZE = 14
+
+HELVETICA_STYLE = {
+    "font.family": "sans-serif",
+    "font.sans-serif": ["Helvetica"],
+    "font.size": WATER_PLOT_FONT_SIZE,
+    "axes.labelsize": WATER_PLOT_FONT_SIZE,
+    "xtick.labelsize": WATER_PLOT_FONT_SIZE,
+    "ytick.labelsize": WATER_PLOT_FONT_SIZE,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+}
+
+
+def format_daily_date_axis(
+    ax: plt.Axes,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> None:
+    """Use compact daily tick labels and place the year in the axis label."""
+    start = pd.Timestamp(start)
+    end = pd.Timestamp(end)
+    ticks = pd.date_range(start.normalize().ceil("D"), end.normalize().floor("D"), freq="D")
+    if ticks.empty:
+        return
+
+    labels: list[str] = []
+    previous_month: int | None = None
+    for index, tick in enumerate(ticks):
+        if index == 0 or tick.month != previous_month:
+            labels.append(f"{tick:%b} {tick.day}")
+        else:
+            labels.append(str(tick.day))
+        previous_month = tick.month
+
+    years = sorted(set(ticks.year))
+    year_label = str(years[0]) if len(years) == 1 else f"{years[0]}-{years[-1]}"
+    ax.xaxis.set_major_locator(FixedLocator(mdates.date2num(ticks.to_pydatetime())))
+    ax.set_xticklabels(labels)
+    ax.tick_params(
+        axis="x",
+        which="major",
+        bottom=True,
+        length=3,
+        width=0.6,
+        direction="out",
+    )
+    ax.set_xlabel(f"Date (UTC; {year_label})")
 
 
 def filter_outliers(df: pd.DataFrame, depth_col: str = "height") -> pd.DataFrame:
@@ -97,18 +148,53 @@ def load_plot_segment(
     )
 
 
+def plot_water_timeseries(
+    water: pd.DataFrame,
+    acquired: pd.Timestamp,
+    ax: plt.Axes,
+) -> plt.Axes:
+    """Draw a water-level series with the satellite acquisition time marked."""
+    ax.plot(water["timestamp_utc"], water["height"], linewidth=1)
+    ax.axvline(acquired, linestyle="--", linewidth=1, color="red")
+    format_daily_date_axis(
+        ax,
+        water["timestamp_utc"].min(),
+        water["timestamp_utc"].max(),
+    )
+    ax.set_ylabel("Water level (m)")
+    return ax
+
+
+def plot_water_timeseries_for_tif(
+    tif_path: Path,
+    ax: plt.Axes,
+    *,
+    length_days: float = 7.0,
+    water_data_path: Path = DEFAULT_WATER_DATA_PATH,
+) -> pd.DataFrame:
+    """Load and draw the logger series centered on a satellite acquisition."""
+    acquired = pd.Timestamp(parse_dt_from_pth(tif_path), tz="UTC")
+    half_window = pd.Timedelta(days=length_days / 2)
+    region_dir = water_data_path / str(infer_region(tif_path))
+    water = load_plot_segment(
+        region_dir,
+        acquired - half_window,
+        acquired + half_window,
+    )
+    plot_water_timeseries(water, acquired, ax)
+    return water
+
+
 def save_plot(
     water: pd.DataFrame,
     acquired: pd.Timestamp,
     output_path: Path,
     dpi: int,
 ) -> None:
-    """Save a single water-level plot with the image time marked in red."""
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(water["timestamp_utc"], water["height"], linewidth=1)
-    ax.axvline(acquired, linestyle="--", linewidth=1, color="red")
-    ax.set_xlabel("Date (UTC)")
-    ax.set_ylabel("Water level (m)")
+    """Save a single Helvetica water-level plot at publication scale."""
+    with mpl.rc_context(HELVETICA_STYLE):
+        fig, ax = plt.subplots(figsize=(10, 4))
+        plot_water_timeseries(water, acquired, ax)
     fig.tight_layout()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
