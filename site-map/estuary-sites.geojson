@@ -1,0 +1,1193 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": 11,
+      "properties": {
+        "site_id": 11,
+        "site_name": "Los Penasquitos Lagoon",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 95.47597520633191
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -117.26,
+          32.933
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 14,
+      "properties": {
+        "site_id": 14,
+        "site_name": "San Luis Rey River",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 18.7699044075124
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -117.391,
+          33.203
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 15,
+      "properties": {
+        "site_id": 15,
+        "site_name": "Santa Margarita River",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 184.223691189335
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -117.416,
+          33.231
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 16,
+      "properties": {
+        "site_id": 16,
+        "site_name": "Las Fores Creek",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 3.484178833443725
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -117.465,
+          33.291
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 17,
+      "properties": {
+        "site_id": 17,
+        "site_name": "San Mateo Creek",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 4.324524577154417
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -117.594,
+          33.386
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 18,
+      "properties": {
+        "site_id": 18,
+        "site_name": "Zuma Lagoon",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 1.7793154970627751
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -118.821,
+          34.015
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 19,
+      "properties": {
+        "site_id": 19,
+        "site_name": "Tsumas Creek",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 30.340537844498968
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -119.183,
+          34.137
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 20,
+      "properties": {
+        "site_id": 20,
+        "site_name": "Santa Clara River",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 130.05918429440388
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -119.265,
+          34.232
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 21,
+      "properties": {
+        "site_id": 21,
+        "site_name": "Ventura River",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 17.225008641766095
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -119.308,
+          34.276
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 22,
+      "properties": {
+        "site_id": 22,
+        "site_name": "Carpinteria Creek",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 0.9148227096001355
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -119.52,
+          34.391
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 25,
+      "properties": {
+        "site_id": 25,
+        "site_name": "Deveereux Slough",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 25.782063581359374
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -119.881,
+          34.411
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 27,
+      "properties": {
+        "site_id": 27,
+        "site_name": "Mission Creek",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 3.4680354895168706
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -119.687,
+          34.413
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 28,
+      "properties": {
+        "site_id": 28,
+        "site_name": "San Pedro Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 0.6186187059186535
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -119.828,
+          34.417
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 29,
+      "properties": {
+        "site_id": 29,
+        "site_name": "Andree Clark Bird Refuge",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 13.285568922055623
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -119.663,
+          34.418
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 31,
+      "properties": {
+        "site_id": 31,
+        "site_name": "Santa Ynez River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 238.18638461909862
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -120.601,
+          34.692
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 32,
+      "properties": {
+        "site_id": 32,
+        "site_name": "San Antonio Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 10.401600300132234
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -120.62,
+          34.796
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 33,
+      "properties": {
+        "site_id": 33,
+        "site_name": "Santa Maria River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 126.35560774717679
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -120.648,
+          34.969
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 34,
+      "properties": {
+        "site_id": 34,
+        "site_name": "Arroyo Grande Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 17.692757486597294
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -120.628,
+          35.1
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 35,
+      "properties": {
+        "site_id": 35,
+        "site_name": "Pismo Creek Lagoon",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 12.376229749442711
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -120.64,
+          35.136
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 38,
+      "properties": {
+        "site_id": 38,
+        "site_name": "Santa Rosa Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 6.428260611037988
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -121.109,
+          35.568
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 39,
+      "properties": {
+        "site_id": 39,
+        "site_name": "Van Gordon Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 6.23653090927477
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -121.126,
+          35.596
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 43,
+      "properties": {
+        "site_id": 43,
+        "site_name": "Arroyo De La Laguna",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 9.166160875750771
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -121.31,
+          35.71
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 44,
+      "properties": {
+        "site_id": 44,
+        "site_name": "San Carpoforo Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 8.87928866320389
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -121.324,
+          35.766
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 46,
+      "properties": {
+        "site_id": 46,
+        "site_name": "Little Sur River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 15.190684102595
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -121.893,
+          36.335
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 48,
+      "properties": {
+        "site_id": 48,
+        "site_name": "Carmel River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 37.64724795813085
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -121.927,
+          36.537
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 50,
+      "properties": {
+        "site_id": 50,
+        "site_name": "Salinas River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 211.0118882064685
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -121.801,
+          36.748
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 51,
+      "properties": {
+        "site_id": 51,
+        "site_name": "Pajaro River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 367.65678096950757
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -121.809,
+          36.852
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 54,
+      "properties": {
+        "site_id": 54,
+        "site_name": "Schwan lagoon",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 11.668949607459332
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -121.998,
+          36.962
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 56,
+      "properties": {
+        "site_id": 56,
+        "site_name": "San Lorenzo River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 16.696328651398783
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.013,
+          36.965
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 57,
+      "properties": {
+        "site_id": 57,
+        "site_name": "Soquel Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 3.0338865178896857
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -121.953,
+          36.972
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 59,
+      "properties": {
+        "site_id": 59,
+        "site_name": "Laguna Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 5.758373981114287
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.155,
+          36.982
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 62,
+      "properties": {
+        "site_id": 62,
+        "site_name": "Scott Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 12.439566191611231
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.23,
+          37.041
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 63,
+      "properties": {
+        "site_id": 63,
+        "site_name": "Wadell Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 16.85697467554995
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.277,
+          37.094
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 64,
+      "properties": {
+        "site_id": 64,
+        "site_name": "Tunitas Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 3.1756775525904013
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.4,
+          37.358
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 65,
+      "properties": {
+        "site_id": 65,
+        "site_name": "Abbots Lagoon",
+        "pmep_region": null,
+        "cmecs_class": null,
+        "estuary_area_ha": null
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.957,
+          38.119
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 66,
+      "properties": {
+        "site_id": 66,
+        "site_name": "Kehoe Creek",
+        "pmep_region": null,
+        "cmecs_class": null,
+        "estuary_area_ha": null
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.949,
+          38.154
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 67,
+      "properties": {
+        "site_id": 67,
+        "site_name": "Estereo De San Antonio",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 86.40716233259941
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.977,
+          38.271
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 68,
+      "properties": {
+        "site_id": 68,
+        "site_name": "Estero Americano",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 217.11201838449722
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.002,
+          38.297
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 70,
+      "properties": {
+        "site_id": 70,
+        "site_name": "Salmon Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 32.678740582312756
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.067,
+          38.355
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 72,
+      "properties": {
+        "site_id": 72,
+        "site_name": "Russian River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 369.0911336848982
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.128,
+          38.451
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 77,
+      "properties": {
+        "site_id": 77,
+        "site_name": "Gualala River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 50.987391413681685
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.53,
+          38.766
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 79,
+      "properties": {
+        "site_id": 79,
+        "site_name": "Garcia River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Riverine Estuary",
+        "estuary_area_ha": 43.67459287431936
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.733,
+          38.954
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 81,
+      "properties": {
+        "site_id": 81,
+        "site_name": "Elder Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 6.322772860465699
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.696,
+          39.004
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 83,
+      "properties": {
+        "site_id": 83,
+        "site_name": "Bonee Gulch",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 5.553734226724963
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.718,
+          39.126
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 84,
+      "properties": {
+        "site_id": 84,
+        "site_name": "Navarro River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 75.6542907579774
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.76,
+          39.192
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 85,
+      "properties": {
+        "site_id": 85,
+        "site_name": "Pudding Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 28.747354688116992
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.808,
+          39.459
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 86,
+      "properties": {
+        "site_id": 86,
+        "site_name": "Virgin Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 5.550753349262057
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.803,
+          39.472
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 88,
+      "properties": {
+        "site_id": 88,
+        "site_name": "Usal Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 7.519191769782756
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.85,
+          39.831
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 92,
+      "properties": {
+        "site_id": 92,
+        "site_name": "Mattolle River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 167.63136006614502
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -124.354,
+          40.295
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 93,
+      "properties": {
+        "site_id": 93,
+        "site_name": "Bear River",
+        "pmep_region": "Washington, Oregon, Northern California Coast",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 18.38446093916046
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -124.389,
+          40.476
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 94,
+      "properties": {
+        "site_id": 94,
+        "site_name": "Big Lagoon",
+        "pmep_region": "Washington, Oregon, Northern California Coast",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 723.2530741614474
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -124.128,
+          41.171
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 95,
+      "properties": {
+        "site_id": 95,
+        "site_name": "Stone Lagoon",
+        "pmep_region": "Washington, Oregon, Northern California Coast",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 264.12567029044186
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -124.097,
+          41.256
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 96,
+      "properties": {
+        "site_id": 96,
+        "site_name": "Redwood Creek",
+        "pmep_region": "Washington, Oregon, Northern California Coast",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 64.87554187462388
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -124.09,
+          41.293
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 98,
+      "properties": {
+        "site_id": 98,
+        "site_name": "Lake Earl",
+        "pmep_region": "Washington, Oregon, Northern California Coast",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 1609.3861916842059
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -124.221,
+          41.828
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 2138,
+      "properties": {
+        "site_id": 2138,
+        "site_name": "Pescadero estuary",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 129.09720363998994
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.411377,
+          37.265431
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 2145,
+      "properties": {
+        "site_id": 2145,
+        "site_name": "Malibu lagoon",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 13.704811605911507
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -118.680481,
+          34.033558
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 2147,
+      "properties": {
+        "site_id": 2147,
+        "site_name": "Rodeo Lagoon",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 20.922653914415843
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.535647,
+          37.829327
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 12097,
+      "properties": {
+        "site_id": 12097,
+        "site_name": "Fern Canyon",
+        "pmep_region": "Washington, Oregon, Northern California Coast",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 30.7719433796131
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -124.0654167107468,
+          41.40466171326754
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 12103,
+      "properties": {
+        "site_id": 12103,
+        "site_name": "Little River",
+        "pmep_region": "Washington, Oregon, Northern California Coast",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 44.990986302925265
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -124.10936941539094,
+          41.022658829910405
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 13008,
+      "properties": {
+        "site_id": 13008,
+        "site_name": "Ten Mile River",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 87.70404625628777
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.75464123433008,
+          39.544176256579156
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 13009,
+      "properties": {
+        "site_id": 13009,
+        "site_name": "Inglenook Fen",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 12.222699453421317
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.77651726847648,
+          39.51989412752781
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 13027,
+      "properties": {
+        "site_id": 13027,
+        "site_name": "Manchester",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 27.65360524568899
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -123.7016563281507,
+          38.990699317754206
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 13057,
+      "properties": {
+        "site_id": 13057,
+        "site_name": "San Gregorio Creek",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 9.35536891641502
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.40153422357041,
+          37.320799109244916
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 13073,
+      "properties": {
+        "site_id": 13073,
+        "site_name": "Corcoran Lagoon",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 8.664882469217831
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -121.98147136899064,
+          36.961703182313094
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 13099,
+      "properties": {
+        "site_id": 13099,
+        "site_name": "San Luis Obispo Creek Lagoon",
+        "pmep_region": "Central California",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 17.162334801893707
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -120.73173810275861,
+          35.182606534670384
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": 14054,
+      "properties": {
+        "site_id": 14054,
+        "site_name": "San Elijo Lagoon",
+        "pmep_region": "Southern California Bight",
+        "cmecs_class": "Lagoonal Estuary",
+        "estuary_area_ha": 158.22085306278328
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -117.27166266244663,
+          33.00881676504501
+        ]
+      }
+    }
+  ]
+}

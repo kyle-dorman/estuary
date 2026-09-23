@@ -1,0 +1,67 @@
+name: Estuary site map
+
+on:
+  pull_request:
+    paths: ['site-map/**', 'scripts/site_map_data.py', 'tests/test_site_map_data.py', 'tests/site_map_browser.cjs', '.github/workflows/site-map.yml']
+  push:
+    branches: [main]
+    paths: ['site-map/**', 'scripts/site_map_data.py', 'tests/test_site_map_data.py', 'tests/site_map_browser.cjs', '.github/workflows/site-map.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-map-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate archived site inventory and provenance
+        run: |
+          python3 scripts/site_map_data.py --check
+          python3 -m unittest discover -s tests -p 'test_site_map_data.py'
+          node --check site-map/app.js
+      - name: Package only the public static map
+        run: |
+          mkdir -p _site/site-map
+          cp site-map/index.html site-map/styles.css site-map/app.js site-map/estuary-sites.geojson site-map/provenance.json _site/site-map/
+          cp -R site-map/vendor _site/site-map/vendor
+          touch _site/.nojekyll
+      - name: Check browser interactions at the deployed project path
+        run: |
+          npm install --prefix "$RUNNER_TEMP/site-map-browser" --no-package-lock --no-audit --no-fund playwright@1.62.1
+          "$RUNNER_TEMP/site-map-browser/node_modules/.bin/playwright" install --with-deps chromium
+          mkdir -p "$RUNNER_TEMP/site-map-preview/estuary"
+          cp -R _site/. "$RUNNER_TEMP/site-map-preview/estuary/"
+          python3 -m http.server 8766 --bind 127.0.0.1 --directory "$RUNNER_TEMP/site-map-preview" &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8766/estuary/site-map/ > /dev/null; then break; fi
+            sleep 1
+          done
+          NODE_PATH="$RUNNER_TEMP/site-map-browser/node_modules" SITE_MAP_URL=http://127.0.0.1:8766/estuary/site-map/ node tests/site_map_browser.cjs
+      - uses: actions/upload-pages-artifact@v4
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          path: _site
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: check-and-package
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}site-map/
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Publish map
+        id: deployment
+        uses: actions/deploy-pages@v4

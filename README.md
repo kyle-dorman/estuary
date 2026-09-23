@@ -2,6 +2,15 @@
 
 Repo for estuaries
 
+## Public site map
+
+The searchable [California estuary site map](https://kyle-dorman.github.io/estuary/site-map/)
+is a discovery interface for the 66 sites in
+[Zenodo dataset version 1.0.0](https://doi.org/10.5281/zenodo.20753031).
+See [site-map/README.md](site-map/README.md) for provenance, local preview,
+validation, and the one-time GitHub Pages publishing steps. Publication is pending
+until those steps are completed.
+
 ## Set me up
 
 Some one time repo initialization work. 
